@@ -32,7 +32,7 @@ class Dorm(models.Model):
     rooms_for_two = models.PositiveIntegerField(verbose_name="Количество комнат на 2")
     rooms_for_three = models.PositiveIntegerField(verbose_name="Количество комнат на 3")
     rooms_for_four = models.PositiveIntegerField(verbose_name="Количество комнат на 4")
-    cost = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Стоимость")
+    cost = models.PositiveIntegerField(verbose_name="Стоимость")
 
     def __str__(self):
         return self.name

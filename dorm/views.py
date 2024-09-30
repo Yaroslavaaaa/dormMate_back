@@ -9,3 +9,8 @@ from .serializers import *
 class StudentAPIView(generics.ListAPIView):
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
+
+
+class DormAPIView(generics.ListAPIView):
+    queryset = Dorm.objects.all()
+    serializer_class = DormSerializer
