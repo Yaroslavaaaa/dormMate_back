@@ -18,9 +18,10 @@ from django.contrib import admin
 from django.urls import path
 # from dorm.views import *
 
-from dorm.views import StudentAPIView
+from dorm.views import *
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/v1/studentlist', StudentAPIView.as_view())
+    path('api/v1/studentlist', StudentViewSet.as_view()),
+    path('api/v1/dormlist', DormViewSet.as_view())
 ]
