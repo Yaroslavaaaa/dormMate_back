@@ -38,14 +38,6 @@ class Dorm(models.Model):
         return self.name
 
 
-# class Application(models.Model):
-#     student = models.ForeignKey(Student, on_delete=models.CASCADE, verbose_name="Студент", related_name="applications")
-#     approval = models.BooleanField(default=False, verbose_name="Одобрение")
-#     dormitory_choice = models.ForeignKey(Dorm, on_delete=models.SET_NULL, null=True, default=None, verbose_name="Выбор по цене")
-#     test_result = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, default=None, verbose_name="Результат теста")
-#
-#     def __str__(self):
-#         return f"Заявка от {self.student}"
 
 class TestQuestion(models.Model):
     QUESTION_TYPE_CHOICES = [
@@ -57,6 +49,10 @@ class TestQuestion(models.Model):
     ]
 
     question_text = models.TextField(verbose_name="Вопрос")
+    answer_variant_a = models.TextField(verbose_name="Вариант a", default=None)
+    answer_variant_b = models.TextField(verbose_name="Вариант b", default=None)
+    answer_variant_c = models.TextField(verbose_name="Вариант c", default=None)
+    answer_variant_d = models.TextField(verbose_name="Вариант d", default=None)
     question_type = models.CharField(max_length=50, choices=QUESTION_TYPE_CHOICES, verbose_name="Тип вопроса")
 
     def __str__(self):
@@ -74,7 +70,8 @@ class Application(models.Model):
     student = models.ForeignKey(Student, on_delete=models.CASCADE, verbose_name="Студент", related_name="applications")
     approval = models.BooleanField(default=False, verbose_name="Одобрение")
     dormitory_choice = models.ForeignKey(Dorm, on_delete=models.SET_NULL, null=True, default=None, verbose_name="Выбор общежития")
-    test_result = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, default=None, verbose_name="Результат теста")
+    test_answers = models.JSONField(default=dict, verbose_name="Ответы теста")
+    test_result = models.CharField(max_length=1, null=True, blank=True, verbose_name="Результат теста")
 
     def __str__(self):
         return f"Заявка от {self.student}"
@@ -86,3 +83,4 @@ class TestResult(models.Model):
 
     def __str__(self):
         return f"{self.application.student} - {self.question} ({self.selected_answer})"
+

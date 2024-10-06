@@ -9,4 +9,5 @@ admin.site.register(Student)
 admin.site.register(Dorm)
 admin.site.register(Application)
 admin.site.register(Region)
+admin.site.register(TestQuestion)
 

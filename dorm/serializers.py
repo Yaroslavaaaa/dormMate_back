@@ -32,9 +32,14 @@ class ApplicationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Application
-        fields = '__all__'
+        fields = ['student', 'dormitory_choice']
+        # fields = '__all__'
 
 class TestResultSerializer(serializers.ModelSerializer):
     class Meta:
         model = TestResult
         fields = '__all__'
+
+
+class ExcelUploadSerializer(serializers.Serializer):
+    file = serializers.FileField()

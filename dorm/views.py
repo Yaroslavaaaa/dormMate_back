@@ -1,7 +1,11 @@
 from rest_framework import viewsets, status, generics
+from rest_framework.views import APIView
 from rest_framework.response import Response
-from .models import Student, Dorm, TestQuestion, TestAnswer, Application, TestResult
-from .serializers import StudentSerializer, DormSerializer, TestQuestionSerializer, ApplicationSerializer, TestResultSerializer
+import pandas as pd
+from thefuzz import process
+from .models import *
+from .serializers import *
+from collections import Counter
 
 class StudentViewSet(generics.ListAPIView):
     queryset = Student.objects.all()
@@ -39,3 +43,98 @@ class TestResultViewSet(viewsets.ModelViewSet):
         application.save()
 
         return Response({'status': 'Test results saved', 'total_score': total_score}, status=status.HTTP_201_CREATED)
+
+
+class ExcelUploadView(APIView):
+    def post(self, request, *args, **kwargs):
+        serializer = ExcelUploadSerializer(data=request.data)
+        if serializer.is_valid():
+            if 'file' not in request.FILES:
+                return Response({"error": "Файл не загружен"}, status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                excel_file = request.FILES['file']
+                df = pd.read_excel(excel_file)
+            except Exception as e:
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+            all_regions = Region.objects.values_list('region_name', flat=True)
+
+            for index, row in df.iterrows():
+                region_name = row['region_name']
+
+                extract_result = process.extractOne(region_name, all_regions)
+
+                if extract_result is None:
+                    return Response({"error": f"Не удалось найти похожие регионы для '{region_name}'"},
+                                    status=status.HTTP_400_BAD_REQUEST)
+
+                closest_region_name, score = extract_result
+
+                if score < 80:
+                    return Response({"error": f"Не удалось найти подходящий регион для '{region_name}'"},
+                                    status=status.HTTP_400_BAD_REQUEST)
+
+                region = Region.objects.get(region_name=closest_region_name)
+
+                student, created = Student.objects.update_or_create(
+                    student_s=row['student_s'],
+                    defaults={
+                        'first_name': row['first_name'],
+                        'last_name': row['last_name'],
+                        'middle_name': row['middle_name'],
+                        'region': region,
+                        'course': row['course'],
+                        'email': row['email']
+                    }
+                )
+
+
+            return Response({"status": "success", "data": "Данные успешно загружены и обновлены"},
+                            status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+
+
+class CreateApplicationView(APIView):
+    def post(self, request):
+        student_id = request.data.get('student')
+        if not student_id:
+            return Response({"error": "Поле 'student' обязательно"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            student = Student.objects.get(pk=student_id)
+        except Student.DoesNotExist:
+            return Response({"error": "Студент с таким ID не найден"}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = ApplicationSerializer(data=request.data)
+        if serializer.is_valid():
+            application = serializer.save(student=student)
+            return Response({"message": "Заявка создана", "application_id": application.id},
+                            status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+class TestView(APIView):
+    def post(self, request, pk):
+        try:
+            application = Application.objects.get(pk=pk)
+        except Application.DoesNotExist:
+            return Response({"error": "Заявка не найдена"}, status=status.HTTP_404_NOT_FOUND)
+
+        test_answers = request.data.get('test_answers')
+        if not test_answers:
+            return Response({"error": "Необходимо предоставить ответы на тест"}, status=status.HTTP_400_BAD_REQUEST)
+
+        letter_count = Counter(test_answers)
+        most_common_letter = letter_count.most_common(1)[0][0]
+
+        application.test_answers = test_answers
+        application.test_result = most_common_letter
+        application.save()
+
+        return Response({"message": "Ваша заявка принята", "result_letter": most_common_letter}, status=status.HTTP_200_OK)
