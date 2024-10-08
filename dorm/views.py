@@ -6,6 +6,9 @@ from thefuzz import process
 from .models import *
 from .serializers import *
 from collections import Counter
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth import authenticate
+
 
 class StudentViewSet(generics.ListAPIView):
     queryset = Student.objects.all()
@@ -138,3 +141,31 @@ class TestView(APIView):
         application.save()
 
         return Response({"message": "Ваша заявка принята", "result_letter": most_common_letter}, status=status.HTTP_200_OK)
+
+
+
+class CustomTokenObtainView(APIView):
+    def post(self, request):
+        username = request.data.get('username')
+        password = request.data.get('password')
+
+        user = authenticate(request, username=username, password=password)
+        if user is not None:
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'type': 'user',
+            })
+
+        email = request.data.get('email')
+        student = authenticate(request, email=email, password=password)
+        if student is not None:
+            refresh = RefreshToken.for_user(student)
+            return Response({
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'type': 'student',
+            })
+
+        return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)

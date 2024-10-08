@@ -29,4 +29,5 @@ urlpatterns = [
     path('api/v1/token/verify/', TokenVerifyView.as_view(), name='token_'),
     path('api/v1/create_application/', CreateApplicationView.as_view(), name='create_application'),
     path('api/v1/test/<int:pk>/', TestView.as_view(), name='test'),
+    path('api/v1/custom_token/', CustomTokenObtainView.as_view(), name='token_obtain'),
 ]
