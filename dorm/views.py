@@ -1,4 +1,5 @@
 from rest_framework import viewsets, status, generics
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 import pandas as pd
@@ -8,6 +9,8 @@ from .serializers import *
 from collections import Counter
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.parsers import MultiPartParser, FormParser
 
 
 class StudentViewSet(generics.ListAPIView):
@@ -31,7 +34,6 @@ class TestResultViewSet(viewsets.ModelViewSet):
     serializer_class = TestResultSerializer
 
     def create(self, request, *args, **kwargs):
-        # Получаем результаты теста и сохраняем их
         test_data = request.data.get('test_results', [])
         application = Application.objects.get(id=request.data.get('application_id'))
         total_score = 0
@@ -42,7 +44,7 @@ class TestResultViewSet(viewsets.ModelViewSet):
             TestResult.objects.create(application=application, question=question, selected_answer=answer)
             total_score += answer.score
 
-        application.test_result = total_score / len(test_data)  # Рассчитываем средний результат
+        application.test_result = total_score / len(test_data)
         application.save()
 
         return Response({'status': 'Test results saved', 'total_score': total_score}, status=status.HTTP_201_CREATED)
@@ -146,22 +148,14 @@ class TestView(APIView):
 
 class CustomTokenObtainView(APIView):
     def post(self, request):
-        username = request.data.get('username')
+        email = request.data.get('email')
         password = request.data.get('password')
 
-        user = authenticate(request, username=username, password=password)
-        if user is not None:
-            refresh = RefreshToken.for_user(user)
-            return Response({
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-                'type': 'user',
-            })
-
-        email = request.data.get('email')
         student = authenticate(request, email=email, password=password)
         if student is not None:
             refresh = RefreshToken.for_user(student)
+            refresh['is_student'] = True
+            refresh['student_id'] = student.id
             return Response({
                 'refresh': str(refresh),
                 'access': str(refresh.access_token),
@@ -169,3 +163,49 @@ class CustomTokenObtainView(APIView):
             })
 
         return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+
+
+
+
+
+
+
+class ApplicationStatusView(APIView):
+    def get(self, request, student_id):
+        applications = Application.objects.filter(student__id=student_id)
+
+        if not applications.exists():
+            return Response({"error": "Заявки не найдены для данного студента"}, status=status.HTTP_404_NOT_FOUND)
+
+        application = applications.first()
+
+        if not application.approval:
+            return Response({"status": "Заявка на рассмотрении"}, status=status.HTTP_200_OK)
+
+        if application.approval and not application.payment_screenshot:
+            return Response({
+                "status": "Заявка одобрена, внесите оплату и прикрепите скрин.",
+                "payment_url": "/path/to/upload/payment/"  # Замените на реальный URL для загрузки скрина
+            }, status=status.HTTP_200_OK)
+
+        if application.approval and application.payment_screenshot:
+            return Response({"status": "Заявка принята, ожидайте ордер."}, status=status.HTTP_200_OK)
+
+        return Response({"error": "Неизвестный статус заявки"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UploadPaymentScreenshotView(APIView):
+    def post(self, request, student_id):
+        try:
+            application = Application.objects.get(student_id=student_id, approval=True)
+        except Application.DoesNotExist:
+            return Response({"error": "Заявка не найдена или не одобрена"}, status=status.HTTP_404_NOT_FOUND)
+
+        payment_screenshot = request.FILES.get('payment_screenshot')
+        if not payment_screenshot:
+            return Response({"error": "Необходимо прикрепить скрин оплаты"}, status=status.HTTP_400_BAD_REQUEST)
+
+        application.payment_screenshot = payment_screenshot
+        application.save()
+
+        return Response({"message": "Скрин оплаты успешно прикреплен, заявка принята. Ожидайте ордер."}, status=status.HTTP_200_OK)
