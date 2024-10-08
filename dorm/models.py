@@ -1,4 +1,5 @@
 from django.db import models
+from django.contrib.auth.hashers import make_password
 
 
 
@@ -17,6 +18,12 @@ class Student(models.Model):
     region = models.ForeignKey(Region, on_delete=models.CASCADE, verbose_name="Область")
     course = models.PositiveIntegerField(verbose_name="Курс")
     email = models.EmailField(verbose_name="Почта")
+    password = models.CharField(max_length=128, verbose_name="Пароль")
+
+    def save(self, *args, **kwargs):
+        if not self.pk or not Student.objects.get(pk=self.pk).password == self.password:
+            self.password = make_password(self.password)
+        super(Student, self).save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.last_name} {self.first_name} ({self.student_s})"
