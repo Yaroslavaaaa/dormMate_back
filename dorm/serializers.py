@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Student, Dorm, TestQuestion, TestAnswer, Application, TestResult
+from .models import *
 
 class StudentSerializer(serializers.ModelSerializer):
     class Meta:
@@ -43,3 +43,18 @@ class TestResultSerializer(serializers.ModelSerializer):
 
 class ExcelUploadSerializer(serializers.Serializer):
     file = serializers.FileField()
+
+
+
+class QuestionAnswerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = QuestionAnswer
+        fields = ['id', 'question', 'answer']
+
+
+
+
+class QuestionOnlySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = QuestionAnswer
+        fields = ['id', 'question']
