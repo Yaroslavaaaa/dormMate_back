@@ -65,13 +65,7 @@ class TestQuestion(models.Model):
     def __str__(self):
         return self.question_text
 
-class TestAnswer(models.Model):
-    question = models.ForeignKey(TestQuestion, on_delete=models.CASCADE, related_name='answers', verbose_name="Вопрос")
-    answer_text = models.CharField(max_length=255, verbose_name="Ответ")
-    score = models.IntegerField(verbose_name="Баллы")
 
-    def __str__(self):
-        return f"{self.answer_text} ({self.score} баллов)"
 
 class Application(models.Model):
     student = models.ForeignKey(Student, on_delete=models.CASCADE, verbose_name="Студент", related_name="applications")
@@ -84,13 +78,6 @@ class Application(models.Model):
     def __str__(self):
         return f"Заявка от {self.student}"
 
-class TestResult(models.Model):
-    application = models.ForeignKey(Application, on_delete=models.CASCADE, verbose_name="Заявка", related_name="test_results")
-    question = models.ForeignKey(TestQuestion, on_delete=models.CASCADE, verbose_name="Вопрос")
-    selected_answer = models.ForeignKey(TestAnswer, on_delete=models.CASCADE, verbose_name="Выбранный ответ")
-
-    def __str__(self):
-        return f"{self.application.student} - {self.question} ({self.selected_answer})"
 
 
 

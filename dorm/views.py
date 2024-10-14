@@ -1,5 +1,4 @@
 from rest_framework import viewsets, status, generics, filters
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 import pandas as pd
@@ -9,9 +8,6 @@ from .serializers import *
 from collections import Counter
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
-from django.db.models import Q
-from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework.parsers import MultiPartParser, FormParser
 
 
 class StudentViewSet(generics.ListAPIView):
@@ -22,33 +18,15 @@ class DormViewSet(generics.ListAPIView):
     queryset = Dorm.objects.all()
     serializer_class = DormSerializer
 
-class TestQuestionViewSet(viewsets.ModelViewSet):
+class TestQuestionViewSet(generics.ListAPIView):
     queryset = TestQuestion.objects.all()
     serializer_class = TestQuestionSerializer
 
-class ApplicationViewSet(viewsets.ModelViewSet):
+class ApplicationViewSet(generics.ListAPIView):
     queryset = Application.objects.all()
     serializer_class = ApplicationSerializer
 
-class TestResultViewSet(viewsets.ModelViewSet):
-    queryset = TestResult.objects.all()
-    serializer_class = TestResultSerializer
 
-    def create(self, request, *args, **kwargs):
-        test_data = request.data.get('test_results', [])
-        application = Application.objects.get(id=request.data.get('application_id'))
-        total_score = 0
-
-        for result in test_data:
-            question = TestQuestion.objects.get(id=result['question_id'])
-            answer = TestAnswer.objects.get(id=result['answer_id'])
-            TestResult.objects.create(application=application, question=question, selected_answer=answer)
-            total_score += answer.score
-
-        application.test_result = total_score / len(test_data)
-        application.save()
-
-        return Response({'status': 'Test results saved', 'total_score': total_score}, status=status.HTTP_201_CREATED)
 
 
 class ExcelUploadView(APIView):
@@ -101,28 +79,33 @@ class ExcelUploadView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-
-
-
-
 class CreateApplicationView(APIView):
     def post(self, request):
         student_id = request.data.get('student')
+        dormitory_choice_id = request.data.get('dormitory_choice')
+
         if not student_id:
             return Response({"error": "Поле 'student' обязательно"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not dormitory_choice_id:
+            return Response({"error": "Поле 'dormitory_choice' обязательно"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             student = Student.objects.get(pk=student_id)
         except Student.DoesNotExist:
             return Response({"error": "Студент с таким ID не найден"}, status=status.HTTP_400_BAD_REQUEST)
 
+        try:
+            dormitory_choice = Dorm.objects.get(pk=dormitory_choice_id)
+        except Dorm.DoesNotExist:
+            return Response({"error": "Общежитие с таким ID не найдено"}, status=status.HTTP_400_BAD_REQUEST)
+
         serializer = ApplicationSerializer(data=request.data)
         if serializer.is_valid():
-            application = serializer.save(student=student)
+            application = serializer.save(student=student, dormitory_choice=dormitory_choice)
             return Response({"message": "Заявка создана", "application_id": application.id},
                             status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 
 class TestView(APIView):
@@ -149,20 +132,25 @@ class TestView(APIView):
 
 class CustomTokenObtainView(APIView):
     def post(self, request):
-        email = request.data.get('email')
+        username = request.data.get('username')
         password = request.data.get('password')
-
+        user = authenticate(request, username=username, password=password)
+        if user is not None:
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'type': 'user',
+            })
+        email = request.data.get('email')
         student = authenticate(request, email=email, password=password)
         if student is not None:
             refresh = RefreshToken.for_user(student)
-            refresh['is_student'] = True
-            refresh['student_id'] = student.id
             return Response({
                 'refresh': str(refresh),
                 'access': str(refresh.access_token),
                 'type': 'student',
             })
-
         return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
 
 
@@ -186,7 +174,7 @@ class ApplicationStatusView(APIView):
         if application.approval and not application.payment_screenshot:
             return Response({
                 "status": "Заявка одобрена, внесите оплату и прикрепите скрин.",
-                "payment_url": "/path/to/upload/payment/"  # Замените на реальный URL для загрузки скрина
+                "payment_url": "http://127.0.0.1:8000/api/v1/upload_payment_screenshot/<int:student_id>/"
             }, status=status.HTTP_200_OK)
 
         if application.approval and application.payment_screenshot:
