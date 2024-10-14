@@ -32,5 +32,8 @@ urlpatterns = [
     path('api/v1/custom_token/', CustomTokenObtainView.as_view(), name='token_obtain'),
     path('api/v1/application_status/<int:student_id>/', ApplicationStatusView.as_view(), name='application_status'),
     path('api/v1/upload_payment_screenshot/<int:student_id>/', UploadPaymentScreenshotView.as_view(), name='application_status'),
+    path('api/v1/web_assistant/', QuestionViewSet.as_view(), name='web_assistant'),
+    path('api/v1/web_assistant/questions/<int:pk>/', AnswerDetailView.as_view(), name='answer-detail'),
+    path('api/v1/web_assistant/questions/', QuestionAnswerViewSet.as_view(), name='answer'),
 
 ]

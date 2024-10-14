@@ -92,3 +92,11 @@ class TestResult(models.Model):
     def __str__(self):
         return f"{self.application.student} - {self.question} ({self.selected_answer})"
 
+
+
+class QuestionAnswer(models.Model):
+    question = models.CharField(max_length=255)
+    answer = models.TextField()
+
+    def __str__(self):
+        return self.question

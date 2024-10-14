@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status, generics
+from rest_framework import viewsets, status, generics, filters
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -9,6 +9,7 @@ from .serializers import *
 from collections import Counter
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
+from django.db.models import Q
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.parsers import MultiPartParser, FormParser
 
@@ -209,3 +210,35 @@ class UploadPaymentScreenshotView(APIView):
         application.save()
 
         return Response({"message": "Скрин оплаты успешно прикреплен, заявка принята. Ожидайте ордер."}, status=status.HTTP_200_OK)
+
+
+
+class QuestionViewSet(generics.ListCreateAPIView):
+    queryset = QuestionAnswer.objects.all()
+    serializer_class = QuestionAnswerSerializer
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+
+
+class AnswerDetailView(generics.RetrieveAPIView):
+    queryset = QuestionAnswer.objects.all()
+    serializer_class = QuestionAnswerSerializer
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        return Response({"question": instance.question, "answer": instance.answer})
+
+
+
+class QuestionAnswerViewSet(generics.ListAPIView):
+    queryset = QuestionAnswer.objects.all()
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['question']
+
+    def get_serializer_class(self):
+        if 'search' in self.request.query_params:
+            return QuestionAnswerSerializer
+        return QuestionOnlySerializer
+
