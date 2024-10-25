@@ -6,6 +6,8 @@ from .models import *
 
 
 admin.site.register(Student)
+admin.site.register(Admin)
+admin.site.register(User)
 admin.site.register(Dorm)
 admin.site.register(Application)
 admin.site.register(Region)

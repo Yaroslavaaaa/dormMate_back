@@ -7,10 +7,6 @@ from thefuzz import process
 from .models import *
 from .serializers import *
 from collections import Counter
-from rest_framework_simplejwt.tokens import RefreshToken
-from django.contrib.auth import authenticate
-from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework.parsers import MultiPartParser, FormParser
 
 
 class StudentViewSet(generics.ListAPIView):
@@ -83,20 +79,27 @@ class ExcelUploadView(APIView):
                 region = Region.objects.get(region_name=closest_region_name)
 
                 student, created = Student.objects.update_or_create(
-                    student_s=row['student_s'],
+                    s=row['student_s'],
                     defaults={
                         'first_name': row['first_name'],
                         'last_name': row['last_name'],
                         'middle_name': row['middle_name'],
                         'region': region,
                         'course': row['course'],
-                        'email': row['email']
+                        'email': row['email'],
+                        'is_active': True,
                     }
                 )
 
+                if created:
+                    password = row.get('password', "1234")
+                    student.set_password(password)
+                    print(f"Password set for {student.s}: {student.password}, {password}")
+                    student.save()
 
             return Response({"status": "success", "data": "Данные успешно загружены и обновлены"},
                             status=status.HTTP_201_CREATED)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -146,32 +149,34 @@ class TestView(APIView):
 
 
 
+
+
+
+
 class CustomTokenObtainView(APIView):
-    def post(self, request):
-        email = request.data.get('email')
-        password = request.data.get('password')
-
-        student = authenticate(request, email=email, password=password)
-        if student is not None:
-            refresh = RefreshToken.for_user(student)
-            refresh['is_student'] = True
-            refresh['student_id'] = student.id
-            return Response({
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-                'type': 'student',
-            })
-
-        return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+    def post(self, request, *args, **kwargs):
+        serializer = CustomTokenObtainSerializer(data=request.data)
+        if serializer.is_valid():
+            return Response(serializer.validated_data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 
 
 
 
+
+class IsStudent(IsAuthenticated):
+    def has_permission(self, request, view):
+        is_authenticated = super().has_permission(request, view)
+        return is_authenticated and hasattr(request.user, 'student')
 
 class ApplicationStatusView(APIView):
-    def get(self, request, student_id):
+    permission_classes = [IsStudent]
+
+    def get(self, request):
+        student_id = request.user.student.id
+
         applications = Application.objects.filter(student__id=student_id)
 
         if not applications.exists():
@@ -195,7 +200,11 @@ class ApplicationStatusView(APIView):
 
 
 class UploadPaymentScreenshotView(APIView):
-    def post(self, request, student_id):
+    permission_classes = [IsStudent]
+
+    def post(self, request):
+        student_id = request.user.student.id
+
         try:
             application = Application.objects.get(student_id=student_id, approval=True)
         except Application.DoesNotExist:
