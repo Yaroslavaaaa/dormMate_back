@@ -19,7 +19,7 @@ class UserManager(BaseUserManager):
             raise ValueError('Users must have an "s" field')
 
         user = self.model(s=s, **extra_fields)
-        user.set_password(password)  # Хешируем пароль
+        user.set_password(password)
         user.save(using=self._db)
         return user
 
@@ -52,9 +52,6 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.s
 
     def save(self, *args, **kwargs):
-        # Хеширование пароля при создании/обновлении
-        if self.pk is None or not self.password.startswith('pbkdf2_sha256'):
-            self.password = make_password(self.password)
         super().save(*args, **kwargs)
 
 class Student(User):
@@ -74,7 +71,6 @@ class Admin(User):
         permissions = [
             ('can_manage_students', 'Can manage students'),
         ]
-
 
 
 

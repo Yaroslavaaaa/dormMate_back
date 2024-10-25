@@ -38,10 +38,12 @@ class CustomTokenObtainSerializer(serializers.Serializer):
         password = data.get('password')
 
         if s and password:
-            user = authenticate(s=s, password=password)
+            user = authenticate(request=self.context.get('request'), s=s, password=password)
+            print(s, password)
             if user:
                 if not user.is_active:
                     raise serializers.ValidationError('User is inactive')
+
                 refresh = RefreshToken.for_user(user)
                 return {
                     'refresh': str(refresh),

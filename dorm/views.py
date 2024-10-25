@@ -1,4 +1,5 @@
 from rest_framework import viewsets, status, generics, filters
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 import pandas as pd
@@ -72,7 +73,6 @@ class ExcelUploadView(APIView):
                 if created:
                     password = row.get('password', "1234")
                     student.set_password(password)
-                    print(f"Password set for {student.s}: {student.password}, {password}")
                     student.save()
 
             return Response({"status": "success", "data": "Данные успешно загружены и обновлены"},
@@ -134,6 +134,7 @@ class CustomTokenObtainView(APIView):
         if serializer.is_valid():
             return Response(serializer.validated_data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class IsStudent(IsAuthenticated):
     def has_permission(self, request, view):

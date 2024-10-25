@@ -7,12 +7,9 @@ class CustomBackend(ModelBackend):
             user = User.objects.get(s=s)
             if user.check_password(password):
                 return user
+            else:
+                print(f"Password check failed for user: {user.s}")
         except User.DoesNotExist:
-            return None
-
-    def get_user(self, user_id):
-        try:
-            return User.objects.get(pk=user_id)
-        except User.DoesNotExist:
+            print(f"User {s} does not exist")
             return None
 
