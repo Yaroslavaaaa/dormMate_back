@@ -1,4 +1,6 @@
 from django.db import models
+from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+
 from django.contrib.auth.hashers import make_password
 
 
@@ -10,25 +12,68 @@ class Region(models.Model):
     def __str__(self):
         return f"{self.region_name}"
 
-class Student(models.Model):
-    student_s = models.CharField(max_length=100, verbose_name="S-ка студента")
-    first_name = models.CharField(max_length=100, verbose_name="Имя")
-    last_name = models.CharField(max_length=100, verbose_name="Фамилия")
-    middle_name = models.CharField(max_length=100, verbose_name="Отчество", blank=True, null=True)
-    region = models.ForeignKey(Region, on_delete=models.CASCADE, verbose_name="Область")
-    course = models.PositiveIntegerField(verbose_name="Курс")
-    email = models.EmailField(verbose_name="Почта")
-    password = models.CharField(max_length=128, verbose_name="Пароль")
 
-    def save(self, *args, **kwargs):
-        if not self.pk or not Student.objects.get(pk=self.pk).password == self.password:
-            self.password = make_password(self.password)
-        super(Student, self).save(*args, **kwargs)
+class UserManager(BaseUserManager):
+    def create_user(self, s, password=None, **extra_fields):
+        if not s:
+            raise ValueError('Users must have an "s" field')
+
+        user = self.model(s=s, **extra_fields)
+        user.set_password(password)  # Хешируем пароль
+        user.save(using=self._db)
+        return user
+
+    def create_superuser(self, s, password=None, **extra_fields):
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+
+        if extra_fields.get('is_staff') is not True:
+            raise ValueError('Superuser must have is_staff=True.')
+        if extra_fields.get('is_superuser') is not True:
+            raise ValueError('Superuser must have is_superuser=True.')
+
+        return self.create_user(s, password, **extra_fields)
+
+class User(AbstractBaseUser, PermissionsMixin):
+    s = models.CharField(max_length=100, unique=True)
+    first_name = models.CharField(max_length=30, blank=True)
+    last_name = models.CharField(max_length=30, blank=True)
+    middle_name = models.CharField(max_length=100, verbose_name="Отчество", blank=True, null=True)
+    email = models.EmailField(blank=True)
+    is_active = models.BooleanField(default=True)
+    is_staff = models.BooleanField(default=False)
+
+    objects = UserManager()
+
+    USERNAME_FIELD = 's'
+    REQUIRED_FIELDS = []
 
     def __str__(self):
-        return f"{self.last_name} {self.first_name} ({self.student_s})"
+        return self.s
 
+    def save(self, *args, **kwargs):
+        # Хеширование пароля при создании/обновлении
+        if self.pk is None or not self.password.startswith('pbkdf2_sha256'):
+            self.password = make_password(self.password)
+        super().save(*args, **kwargs)
 
+class Student(User):
+    course = models.CharField(max_length=100)
+    region = models.ForeignKey('Region', on_delete=models.CASCADE, verbose_name="Область")
+
+    class Meta:
+        verbose_name = 'Student'
+        verbose_name_plural = 'Students'
+
+class Admin(User):
+    department = models.CharField(max_length=100)
+
+    class Meta:
+        verbose_name = 'Admin'
+        verbose_name_plural = 'Admins'
+        permissions = [
+            ('can_manage_students', 'Can manage students'),
+        ]
 
 
 

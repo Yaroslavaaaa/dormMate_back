@@ -9,7 +9,6 @@ from collections import Counter
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 
-
 class StudentViewSet(generics.ListAPIView):
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
@@ -25,9 +24,6 @@ class TestQuestionViewSet(generics.ListAPIView):
 class ApplicationViewSet(generics.ListAPIView):
     queryset = Application.objects.all()
     serializer_class = ApplicationSerializer
-
-
-
 
 class ExcelUploadView(APIView):
     def post(self, request, *args, **kwargs):
@@ -46,7 +42,6 @@ class ExcelUploadView(APIView):
 
             for index, row in df.iterrows():
                 region_name = row['region_name']
-
                 extract_result = process.extractOne(region_name, all_regions)
 
                 if extract_result is None:
@@ -62,22 +57,28 @@ class ExcelUploadView(APIView):
                 region = Region.objects.get(region_name=closest_region_name)
 
                 student, created = Student.objects.update_or_create(
-                    student_s=row['student_s'],
+                    s=row['student_s'],
                     defaults={
                         'first_name': row['first_name'],
                         'last_name': row['last_name'],
                         'middle_name': row['middle_name'],
                         'region': region,
                         'course': row['course'],
-                        'email': row['email']
+                        'email': row['email'],
+                        'is_active': True,
                     }
                 )
 
+                if created:
+                    password = row.get('password', "1234")
+                    student.set_password(password)
+                    print(f"Password set for {student.s}: {student.password}, {password}")
+                    student.save()
 
             return Response({"status": "success", "data": "Данные успешно загружены и обновлены"},
                             status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class CreateApplicationView(APIView):
     def post(self, request):
@@ -107,7 +108,6 @@ class CreateApplicationView(APIView):
                             status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
 class TestView(APIView):
     def post(self, request, pk):
         try:
@@ -128,39 +128,24 @@ class TestView(APIView):
 
         return Response({"message": "Ваша заявка принята", "result_letter": most_common_letter}, status=status.HTTP_200_OK)
 
-
-
 class CustomTokenObtainView(APIView):
-    def post(self, request):
-        username = request.data.get('username')
-        password = request.data.get('password')
-        user = authenticate(request, username=username, password=password)
-        if user is not None:
-            refresh = RefreshToken.for_user(user)
-            return Response({
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-                'type': 'user',
-            })
-        email = request.data.get('email')
-        student = authenticate(request, email=email, password=password)
-        if student is not None:
-            refresh = RefreshToken.for_user(student)
-            return Response({
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-                'type': 'student',
-            })
-        return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+    def post(self, request, *args, **kwargs):
+        serializer = CustomTokenObtainSerializer(data=request.data)
+        if serializer.is_valid():
+            return Response(serializer.validated_data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
-
-
-
-
+class IsStudent(IsAuthenticated):
+    def has_permission(self, request, view):
+        is_authenticated = super().has_permission(request, view)
+        return is_authenticated and hasattr(request.user, 'student')
 
 class ApplicationStatusView(APIView):
-    def get(self, request, student_id):
+    permission_classes = [IsStudent]
+
+    def get(self, request):
+        student_id = request.user.student.id
+
         applications = Application.objects.filter(student__id=student_id)
 
         if not applications.exists():
@@ -182,9 +167,12 @@ class ApplicationStatusView(APIView):
 
         return Response({"error": "Неизвестный статус заявки"}, status=status.HTTP_400_BAD_REQUEST)
 
-
 class UploadPaymentScreenshotView(APIView):
-    def post(self, request, student_id):
+    permission_classes = [IsStudent]
+
+    def post(self, request):
+        student_id = request.user.student.id
+
         try:
             application = Application.objects.get(student_id=student_id, approval=True)
         except Application.DoesNotExist:
@@ -199,16 +187,12 @@ class UploadPaymentScreenshotView(APIView):
 
         return Response({"message": "Скрин оплаты успешно прикреплен, заявка принята. Ожидайте ордер."}, status=status.HTTP_200_OK)
 
-
-
 class QuestionViewSet(generics.ListCreateAPIView):
     queryset = QuestionAnswer.objects.all()
     serializer_class = QuestionAnswerSerializer
 
     def perform_create(self, serializer):
         serializer.save()
-
-
 
 class AnswerDetailView(generics.RetrieveAPIView):
     queryset = QuestionAnswer.objects.all()
@@ -217,8 +201,6 @@ class AnswerDetailView(generics.RetrieveAPIView):
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
         return Response({"question": instance.question, "answer": instance.answer})
-
-
 
 class QuestionAnswerViewSet(generics.ListAPIView):
     queryset = QuestionAnswer.objects.all()
@@ -229,4 +211,3 @@ class QuestionAnswerViewSet(generics.ListAPIView):
         if 'search' in self.request.query_params:
             return QuestionAnswerSerializer
         return QuestionOnlySerializer
-
