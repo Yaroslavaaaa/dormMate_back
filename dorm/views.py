@@ -1,5 +1,4 @@
-from rest_framework import viewsets, status, generics
-from rest_framework.permissions import IsAuthenticated
+from rest_framework import viewsets, status, generics, filters
 from rest_framework.views import APIView
 from rest_framework.response import Response
 import pandas as pd
@@ -7,7 +6,8 @@ from thefuzz import process
 from .models import *
 from .serializers import *
 from collections import Counter
-
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth import authenticate
 
 class StudentViewSet(generics.ListAPIView):
     queryset = Student.objects.all()
@@ -17,34 +17,13 @@ class DormViewSet(generics.ListAPIView):
     queryset = Dorm.objects.all()
     serializer_class = DormSerializer
 
-class TestQuestionViewSet(viewsets.ModelViewSet):
+class TestQuestionViewSet(generics.ListAPIView):
     queryset = TestQuestion.objects.all()
     serializer_class = TestQuestionSerializer
 
-class ApplicationViewSet(viewsets.ModelViewSet):
+class ApplicationViewSet(generics.ListAPIView):
     queryset = Application.objects.all()
     serializer_class = ApplicationSerializer
-
-class TestResultViewSet(viewsets.ModelViewSet):
-    queryset = TestResult.objects.all()
-    serializer_class = TestResultSerializer
-
-    def create(self, request, *args, **kwargs):
-        test_data = request.data.get('test_results', [])
-        application = Application.objects.get(id=request.data.get('application_id'))
-        total_score = 0
-
-        for result in test_data:
-            question = TestQuestion.objects.get(id=result['question_id'])
-            answer = TestAnswer.objects.get(id=result['answer_id'])
-            TestResult.objects.create(application=application, question=question, selected_answer=answer)
-            total_score += answer.score
-
-        application.test_result = total_score / len(test_data)
-        application.save()
-
-        return Response({'status': 'Test results saved', 'total_score': total_score}, status=status.HTTP_201_CREATED)
-
 
 class ExcelUploadView(APIView):
     def post(self, request, *args, **kwargs):
@@ -63,7 +42,6 @@ class ExcelUploadView(APIView):
 
             for index, row in df.iterrows():
                 region_name = row['region_name']
-
                 extract_result = process.extractOne(region_name, all_regions)
 
                 if extract_result is None:
@@ -102,30 +80,33 @@ class ExcelUploadView(APIView):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
-
-
-
-
 class CreateApplicationView(APIView):
     def post(self, request):
         student_id = request.data.get('student')
+        dormitory_choice_id = request.data.get('dormitory_choice')
+
         if not student_id:
             return Response({"error": "Поле 'student' обязательно"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not dormitory_choice_id:
+            return Response({"error": "Поле 'dormitory_choice' обязательно"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             student = Student.objects.get(pk=student_id)
         except Student.DoesNotExist:
             return Response({"error": "Студент с таким ID не найден"}, status=status.HTTP_400_BAD_REQUEST)
 
+        try:
+            dormitory_choice = Dorm.objects.get(pk=dormitory_choice_id)
+        except Dorm.DoesNotExist:
+            return Response({"error": "Общежитие с таким ID не найдено"}, status=status.HTTP_400_BAD_REQUEST)
+
         serializer = ApplicationSerializer(data=request.data)
         if serializer.is_valid():
-            application = serializer.save(student=student)
+            application = serializer.save(student=student, dormitory_choice=dormitory_choice)
             return Response({"message": "Заявка создана", "application_id": application.id},
                             status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
 
 class TestView(APIView):
     def post(self, request, pk):
@@ -147,24 +128,12 @@ class TestView(APIView):
 
         return Response({"message": "Ваша заявка принята", "result_letter": most_common_letter}, status=status.HTTP_200_OK)
 
-
-
-
-
-
-
 class CustomTokenObtainView(APIView):
     def post(self, request, *args, **kwargs):
         serializer = CustomTokenObtainSerializer(data=request.data)
         if serializer.is_valid():
             return Response(serializer.validated_data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-
-
-
-
 
 class IsStudent(IsAuthenticated):
     def has_permission(self, request, view):
@@ -190,14 +159,13 @@ class ApplicationStatusView(APIView):
         if application.approval and not application.payment_screenshot:
             return Response({
                 "status": "Заявка одобрена, внесите оплату и прикрепите скрин.",
-                "payment_url": "/path/to/upload/payment/"  # Замените на реальный URL для загрузки скрина
+                "payment_url": "http://127.0.0.1:8000/api/v1/upload_payment_screenshot/<int:student_id>/"
             }, status=status.HTTP_200_OK)
 
         if application.approval and application.payment_screenshot:
             return Response({"status": "Заявка принята, ожидайте ордер."}, status=status.HTTP_200_OK)
 
         return Response({"error": "Неизвестный статус заявки"}, status=status.HTTP_400_BAD_REQUEST)
-
 
 class UploadPaymentScreenshotView(APIView):
     permission_classes = [IsStudent]
@@ -218,3 +186,28 @@ class UploadPaymentScreenshotView(APIView):
         application.save()
 
         return Response({"message": "Скрин оплаты успешно прикреплен, заявка принята. Ожидайте ордер."}, status=status.HTTP_200_OK)
+
+class QuestionViewSet(generics.ListCreateAPIView):
+    queryset = QuestionAnswer.objects.all()
+    serializer_class = QuestionAnswerSerializer
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+class AnswerDetailView(generics.RetrieveAPIView):
+    queryset = QuestionAnswer.objects.all()
+    serializer_class = QuestionAnswerSerializer
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        return Response({"question": instance.question, "answer": instance.answer})
+
+class QuestionAnswerViewSet(generics.ListAPIView):
+    queryset = QuestionAnswer.objects.all()
+    filter_backends = [filters.SearchFilter]
+    search_fields = ['question']
+
+    def get_serializer_class(self):
+        if 'search' in self.request.query_params:
+            return QuestionAnswerSerializer
+        return QuestionOnlySerializer
