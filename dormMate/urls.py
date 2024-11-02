@@ -7,6 +7,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/v1/studentlist', StudentViewSet.as_view()),
     path('api/v1/dormlist', DormViewSet.as_view()),
+    path('api/v1/questionlist', TestQuestionViewSet.as_view()),
     path('api/v1/upload-excel/', ExcelUploadView.as_view()),
     path('api/v1/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/v1/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),

@@ -16,7 +16,7 @@ class DormSerializer(serializers.ModelSerializer):
 class TestQuestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = TestQuestion
-        fields = ['id', 'question_text', 'question_type', 'answers']
+        fields = "__all__"
 
 class ApplicationSerializer(serializers.ModelSerializer):
     student = StudentSerializer(read_only=True)
