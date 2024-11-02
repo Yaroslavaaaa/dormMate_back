@@ -26,7 +26,14 @@ class ApplicationViewSet(generics.ListAPIView):
     queryset = Application.objects.all()
     serializer_class = ApplicationSerializer
 
+
+class IsAdmin(IsAuthenticated):
+    def has_permission(self, request, view):
+        is_authenticated = super().has_permission(request, view)
+        return is_authenticated and (hasattr(request.user, 'admin') or request.user.is_superuser)
+
 class ExcelUploadView(APIView):
+    permission_classes = [IsAdmin]
     def post(self, request, *args, **kwargs):
         serializer = ExcelUploadSerializer(data=request.data)
         if serializer.is_valid():
@@ -80,9 +87,16 @@ class ExcelUploadView(APIView):
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
+class IsStudent(IsAuthenticated):
+    def has_permission(self, request, view):
+        is_authenticated = super().has_permission(request, view)
+        return is_authenticated and hasattr(request.user, 'student')
+
 class CreateApplicationView(APIView):
+    permission_classes = [IsStudent]
     def post(self, request):
-        student_id = request.data.get('student')
+        student_id = request.user.student.id
         dormitory_choice_id = request.data.get('dormitory_choice')
 
         if not student_id:
@@ -109,6 +123,7 @@ class CreateApplicationView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class TestView(APIView):
+    permission_classes = [IsStudent]
     def post(self, request, pk):
         try:
             application = Application.objects.get(pk=pk)
@@ -136,10 +151,7 @@ class CustomTokenObtainView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class IsStudent(IsAuthenticated):
-    def has_permission(self, request, view):
-        is_authenticated = super().has_permission(request, view)
-        return is_authenticated and hasattr(request.user, 'student')
+
 
 class ApplicationStatusView(APIView):
     permission_classes = [IsStudent]

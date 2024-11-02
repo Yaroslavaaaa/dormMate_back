@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+import re
 
 from django.contrib.auth.hashers import make_password
 
@@ -18,12 +19,14 @@ class UserManager(BaseUserManager):
         if not s:
             raise ValueError('Users must have an "s" field')
 
+        s = s.upper()
         user = self.model(s=s, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
         return user
 
     def create_superuser(self, s, password=None, **extra_fields):
+        s = s.upper()
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
 
@@ -31,6 +34,10 @@ class UserManager(BaseUserManager):
             raise ValueError('Superuser must have is_staff=True.')
         if extra_fields.get('is_superuser') is not True:
             raise ValueError('Superuser must have is_superuser=True.')
+
+        if not re.fullmatch(r"F\d{8}", s):
+            raise ValueError(
+                'Superuser "s" must start with "F" followed by exactly eight digits, making it 9 characters long.')
 
         return self.create_user(s, password, **extra_fields)
 
@@ -52,6 +59,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.s
 
     def save(self, *args, **kwargs):
+        if self.s:
+            self.s = self.s.upper()
         super().save(*args, **kwargs)
 
 class Student(User):
@@ -62,6 +71,12 @@ class Student(User):
         verbose_name = 'Student'
         verbose_name_plural = 'Students'
 
+    def save(self, *args, **kwargs):
+        if not re.fullmatch(r"S\d{8}", self.s):
+            raise ValueError(
+                'Student "s" must start with "S" followed by exactly eight digits, making it 9 characters long.')
+        super().save(*args, **kwargs)
+
 class Admin(User):
     department = models.CharField(max_length=100)
 
@@ -71,6 +86,12 @@ class Admin(User):
         permissions = [
             ('can_manage_students', 'Can manage students'),
         ]
+
+    def save(self, *args, **kwargs):
+        if not re.fullmatch(r"F\d{8}", self.s):
+            raise ValueError(
+                'Admin "s" must start with "F" followed by exactly eight digits, making it 9 characters long.')
+        super().save(*args, **kwargs)
 
 
 
@@ -100,7 +121,6 @@ class TestQuestion(models.Model):
     answer_variant_a = models.TextField(verbose_name="Вариант a", default=None)
     answer_variant_b = models.TextField(verbose_name="Вариант b", default=None)
     answer_variant_c = models.TextField(verbose_name="Вариант c", default=None)
-    answer_variant_d = models.TextField(verbose_name="Вариант d", default=None)
     question_type = models.CharField(max_length=50, choices=QUESTION_TYPE_CHOICES, verbose_name="Тип вопроса")
 
     def __str__(self):
@@ -109,12 +129,13 @@ class TestQuestion(models.Model):
 
 
 class Application(models.Model):
-    student = models.ForeignKey(Student, on_delete=models.CASCADE, verbose_name="Студент", related_name="applications")
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, verbose_name="Студент", related_name="application")
     approval = models.BooleanField(default=False, verbose_name="Одобрение")
     dormitory_choice = models.ForeignKey(Dorm, on_delete=models.SET_NULL, null=True, default=None, verbose_name="Выбор общежития")
     test_answers = models.JSONField(default=dict, verbose_name="Ответы теста")
     test_result = models.CharField(max_length=1, null=True, blank=True, verbose_name="Результат теста")
     payment_screenshot = models.ImageField(upload_to='payments/', null=True, blank=True, verbose_name="Скрин оплаты")
+    priority = models.ImageField(upload_to='priority/', null=True, blank=True, verbose_name="Справка")
 
     def __str__(self):
         return f"Заявка от {self.student}"
@@ -128,3 +149,13 @@ class QuestionAnswer(models.Model):
 
     def __str__(self):
         return self.question
+
+
+
+
+class StudentInDorm(models.Model):
+    student_id = models.ForeignKey(Student, on_delete=models.CASCADE, verbose_name="student", related_name="Студент")
+    dorm_id = models.ForeignKey(Dorm, on_delete=models.CASCADE, verbose_name="dorm", related_name="Общежитие")
+    room = models.CharField(max_length=10, null=True, blank=True, verbose_name="Комната")
+    application_id = models.ForeignKey(Application, on_delete=models.CASCADE, verbose_name="application", related_name="Заявление")
+    order = models.ImageField(upload_to='orders/', null=True, blank=True, verbose_name="Ордер")
