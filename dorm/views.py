@@ -7,7 +7,11 @@ from thefuzz import process
 from .models import *
 from .serializers import *
 from collections import Counter
+from django.db import transaction
+from collections import defaultdict
+from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.exceptions import NotFound
 from django.contrib.auth import authenticate
 
 class StudentViewSet(generics.ListAPIView):
@@ -25,6 +29,32 @@ class TestQuestionViewSet(generics.ListAPIView):
 class ApplicationViewSet(generics.ListAPIView):
     queryset = Application.objects.all()
     serializer_class = ApplicationSerializer
+
+
+
+
+# class StudentDetailView(RetrieveUpdateAPIView):
+#     serializer_class = StudentSerializer
+#     permission_classes = [IsAuthenticated]
+#
+#     def get_object(self):
+#         try:
+#             return Student.objects.get(s=self.request.user.student.id)
+#         except Student.DoesNotExist:
+#             raise NotFound("Студент с таким токеном не найден.")
+
+
+
+
+class StudentDetailView(RetrieveUpdateAPIView):
+    serializer_class = StudentSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self):
+        try:
+            return self.request.user.student
+        except Student.DoesNotExist:
+            raise NotFound("Студент с таким токеном не найден.")
 
 
 class IsAdmin(IsAuthenticated):
@@ -124,9 +154,10 @@ class CreateApplicationView(APIView):
 
 class TestView(APIView):
     permission_classes = [IsStudent]
-    def post(self, request, pk):
+    def post(self, request):
+        student_id = request.user.student.id
         try:
-            application = Application.objects.get(pk=pk)
+            application = Application.objects.get(student__id=student_id)
         except Application.DoesNotExist:
             return Response({"error": "Заявка не найдена"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -224,3 +255,127 @@ class QuestionAnswerViewSet(generics.ListAPIView):
         if 'search' in self.request.query_params:
             return QuestionAnswerSerializer
         return QuestionOnlySerializer
+
+
+class DistributeStudentsAPIView(APIView):
+
+    def post(self, request, *args, **kwargs):
+        total_places = Dorm.objects.aggregate(total_places=models.Sum('total_places'))['total_places']
+
+        if not total_places or total_places <= 0:
+            return Response({"detail": "Нет доступных мест в общежитиях."}, status=status.HTTP_400_BAD_REQUEST)
+
+        pending_applications = Application.objects.filter(approval=False).select_related('student').order_by(
+            '-priority',
+            'student__course'
+        )
+
+        selected_applications = pending_applications[:total_places]
+
+        with transaction.atomic():
+            for application in selected_applications:
+                application.approval = True
+                application.save()
+
+        return Response(
+            {"detail": f"{len(selected_applications)} студентов были одобрены для заселения."},
+            status=status.HTTP_200_OK
+        )
+
+
+
+
+
+
+
+
+class DistributeStudentsAPIView2(APIView):
+
+    def post(self, request, *args, **kwargs):
+        dorms = Dorm.objects.all()
+
+        approved_applications = Application.objects.filter(
+            approval=True,
+            payment_screenshot__isnull=False
+        ).exclude(payment_screenshot="")
+
+        grouped_applications = defaultdict(list)
+        for app in approved_applications:
+            grouped_applications[app.test_result].append(app)
+
+        print("Общее количество одобренных заявок с оплатой:", approved_applications.count())
+        for test_result, apps in grouped_applications.items():
+            print(f"Количество студентов с результатом теста '{test_result}': {len(apps)}")
+
+        with transaction.atomic():
+            for dorm in dorms:
+                room_counts = {
+                    2: dorm.rooms_for_two,
+                    3: dorm.rooms_for_three,
+                    4: dorm.rooms_for_four
+                }
+
+                room_number = 1
+                for room_size, available_rooms in room_counts.items():
+                    for _ in range(available_rooms):
+                        students_for_room = []
+                        for test_result, test_group in grouped_applications.items():
+                            if len(test_group) >= room_size:
+                                students_for_room = [
+                                    student for student in test_group[:room_size]
+                                    if not StudentInDorm.objects.filter(student_id=student.student).exists()
+                                ]
+                                grouped_applications[test_result] = [
+                                    student for student in test_group if student not in students_for_room
+                                ]
+                                break
+
+                        if len(students_for_room) != room_size:
+                            remaining_students = [
+                                student for group in grouped_applications.values() for student in group
+                                if not StudentInDorm.objects.filter(student_id=student.student).exists()
+                            ]
+                            if remaining_students:
+                                students_for_room = remaining_students[:room_size]
+                                for student in students_for_room:
+                                    grouped_applications[student.test_result].remove(student)
+
+                        if len(students_for_room) == 0:
+                            continue
+
+                        print(f"Комната размером {room_size} в общежитии {dorm.id} получает студентов:",
+                              [student_application.student.id for student_application in students_for_room])
+
+                        for student_application in students_for_room:
+                            StudentInDorm.objects.create(
+                                student_id=student_application.student,
+                                dorm_id=dorm,
+                                room=f"{dorm.id}-{room_number}",
+                                application_id=student_application
+                            )
+
+                        room_number += 1
+
+        allocated_count = StudentInDorm.objects.count()
+        print("Общее количество студентов, добавленных в StudentInDorm:", allocated_count)
+
+        return Response(
+            {"detail": "Студенты успешно распределены по комнатам."},
+            status=status.HTTP_200_OK
+        )
+
+
+
+
+
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            refresh_token = request.data["refresh"]
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+            return Response({"detail": "Logout successful"}, status=200)
+        except Exception:
+            return Response({"detail": "Invalid token"}, status=400)

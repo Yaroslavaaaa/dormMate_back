@@ -159,3 +159,6 @@ class StudentInDorm(models.Model):
     room = models.CharField(max_length=10, null=True, blank=True, verbose_name="Комната")
     application_id = models.ForeignKey(Application, on_delete=models.CASCADE, verbose_name="application", related_name="Заявление")
     order = models.ImageField(upload_to='orders/', null=True, blank=True, verbose_name="Ордер")
+
+    def __str__(self):
+        return f"{self.student_id}"
