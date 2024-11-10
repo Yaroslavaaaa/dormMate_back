@@ -379,3 +379,18 @@ class LogoutView(APIView):
             return Response({"detail": "Logout successful"}, status=200)
         except Exception:
             return Response({"detail": "Invalid token"}, status=400)
+
+
+class UserTypeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if hasattr(user, 'student'):
+            user_type = 'student'
+        elif hasattr(user, 'admin') or user.is_superuser:
+            user_type = 'admin'
+        else:
+            user_type = 'unknown'
+
+        return Response({"user_type": user_type})

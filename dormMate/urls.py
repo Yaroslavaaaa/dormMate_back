@@ -24,4 +24,5 @@ urlpatterns = [
     path('api/v1/distribute-students2/', DistributeStudentsAPIView2.as_view(), name='distribute-students'),
     path('api/v1/studentdetail/', StudentDetailView.as_view(), name='student_detail'),
     path("api/v1/logout/", LogoutView.as_view(), name="logout"),
+    path("api/v1/usertype/", UserTypeView.as_view(), name="usertype"),
 ]
