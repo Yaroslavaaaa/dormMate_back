@@ -59,6 +59,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.s
 
     def save(self, *args, **kwargs):
+        if self.password and not self.password.startswith('pbkdf2_sha256$'):
+            self.set_password(self.password)
         if self.s:
             self.s = self.s.upper()
         super().save(*args, **kwargs)
