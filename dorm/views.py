@@ -13,6 +13,7 @@ from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.exceptions import NotFound
 from django.contrib.auth import authenticate
+from django.http import HttpResponse
 
 class StudentViewSet(generics.ListAPIView):
     queryset = Student.objects.all()
@@ -394,3 +395,6 @@ class UserTypeView(APIView):
             user_type = 'unknown'
 
         return Response({"user_type": user_type})
+
+
+
