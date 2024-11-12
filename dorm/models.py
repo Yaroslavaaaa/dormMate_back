@@ -21,6 +21,10 @@ class UserManager(BaseUserManager):
 
         s = s.upper()
         user = self.model(s=s, **extra_fields)
+
+        if not password and 'birth_date' in extra_fields:
+            password = extra_fields['birth_date'].strftime('%d%m%Y')
+
         user.set_password(password)
         user.save(using=self._db)
         return user
@@ -47,6 +51,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     last_name = models.CharField(max_length=30, blank=True)
     middle_name = models.CharField(max_length=100, verbose_name="Отчество", blank=True, null=True)
     email = models.EmailField(blank=True)
+    birth_date = models.DateField(verbose_name="Дата рождения",blank=True, null=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
 
