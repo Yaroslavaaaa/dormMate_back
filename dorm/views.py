@@ -4,6 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 import pandas as pd
 from thefuzz import process
+from datetime import datetime
 from .models import *
 from .serializers import *
 from collections import Counter
@@ -95,6 +96,15 @@ class ExcelUploadView(APIView):
 
                 region = Region.objects.get(region_name=closest_region_name)
 
+                birth_date_str = row['birth_date']
+                try:
+                    birth_date = datetime.strptime(birth_date_str, '%Y-%m-%d')
+                except ValueError:
+                    return Response({"error": f"Неверный формат даты рождения для студента {row['student_s']}"},
+                                    status=status.HTTP_400_BAD_REQUEST)
+
+                password = birth_date.strftime('%d%m%Y')
+
                 student, created = Student.objects.update_or_create(
                     s=row['student_s'],
                     defaults={
@@ -104,12 +114,12 @@ class ExcelUploadView(APIView):
                         'region': region,
                         'course': row['course'],
                         'email': row['email'],
+                        'birth_date': birth_date,
                         'is_active': True,
                     }
                 )
 
                 if created:
-                    password = row.get('password', "1234")
                     student.set_password(password)
                     student.save()
 
