@@ -63,3 +63,7 @@ class QuestionOnlySerializer(serializers.ModelSerializer):
     class Meta:
         model = QuestionAnswer
         fields = ['id', 'question']
+
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True)

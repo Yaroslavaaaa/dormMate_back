@@ -188,6 +188,7 @@ SIMPLE_JWT = {
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
     'dorm.backends.CustomBackend',
+
 ]
 
 CORS_ALLOWED_ORIGINS = [
