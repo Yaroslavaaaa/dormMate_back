@@ -407,4 +407,36 @@ class UserTypeView(APIView):
         return Response({"user_type": user_type})
 
 
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
 
+    def post(self, request):
+        user = request.user
+
+        if not hasattr(user, 'student'):
+            return Response({"error": "Only students can change passwords."}, status=status.HTTP_403_FORBIDDEN)
+
+        old_password = request.data.get('old_password')
+        new_password = request.data.get('new_password')
+        confirm_password = request.data.get('confirm_password')
+
+        if not old_password or not new_password or not confirm_password:
+            return Response({"error": "All fields are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if new_password != confirm_password:
+            return Response({"error": "New password and confirm password do not match."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if len(new_password) < 8:
+            return Response({"error": "The new password must be at least 8 characters long."}, status=status.HTTP_400_BAD_REQUEST)
+        if not re.search(r'[A-Za-z]', new_password):
+            return Response({"error": "The new password must contain at least one letter."}, status=status.HTTP_400_BAD_REQUEST)
+        if not re.search(r'[\W_]', new_password):
+            return Response({"error": "The new password must contain at least one special character."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not user.check_password(old_password):
+            return Response({"error": "Current password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(new_password)
+        user.save()
+
+        return Response({"message": "Password successfully updated."}, status=status.HTTP_200_OK)
