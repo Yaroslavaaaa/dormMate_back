@@ -46,12 +46,24 @@ class UserManager(BaseUserManager):
         return self.create_user(s, password, **extra_fields)
 
 class User(AbstractBaseUser, PermissionsMixin):
+    GENDER_CHOICES = [
+        ('M', 'Male'),
+        ('F', 'Female'),
+    ]
+
     s = models.CharField(max_length=100, unique=True)
     first_name = models.CharField(max_length=30, blank=True)
     last_name = models.CharField(max_length=30, blank=True)
     middle_name = models.CharField(max_length=100, verbose_name="Отчество", blank=True, null=True)
     email = models.EmailField(blank=True)
     birth_date = models.DateField(verbose_name="Дата рождения",blank=True, null=True)
+    gender = models.CharField(
+        max_length=1,
+        choices=GENDER_CHOICES,
+        verbose_name="Пол",
+        blank=True,
+        null=True
+    )
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
 
@@ -142,7 +154,25 @@ class Application(models.Model):
     test_answers = models.JSONField(default=dict, verbose_name="Ответы теста")
     test_result = models.CharField(max_length=1, null=True, blank=True, verbose_name="Результат теста")
     payment_screenshot = models.ImageField(upload_to='payments/', null=True, blank=True, verbose_name="Скрин оплаты")
+    ent_result = models.PositiveIntegerField(null=True, blank=True, verbose_name="Результат ЕНТ")
+    gpa = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True, verbose_name="GPA")
     priority = models.ImageField(upload_to='priority/', null=True, blank=True, verbose_name="Справка")
+    orphan_certificate = models.ImageField(upload_to='priority/orphan/', null=True, blank=True,
+                                           verbose_name="Справка о сиротстве")
+    disability_1_2_certificate = models.ImageField(upload_to='priority/disability_1_2/', null=True, blank=True,
+                                                   verbose_name="Справка об инвалидности 1-2 групп")
+    disability_3_certificate = models.ImageField(upload_to='priority/disability_3/', null=True, blank=True,
+                                                 verbose_name="Справка об инвалидности 3 группы")
+    parents_disability_certificate = models.ImageField(upload_to='priority/parents_disability/', null=True, blank=True,
+                                                       verbose_name="Справка об инвалидности родителей")
+    loss_of_breadwinner_certificate = models.ImageField(upload_to='priority/loss_of_breadwinner/', null=True, blank=True,
+                                                        verbose_name="Справка о потере кормильца")
+    social_aid_certificate = models.ImageField(upload_to='priority/social_aid/', null=True, blank=True,
+                                               verbose_name="Справка о получении государственной социальной помощи")
+    mangilik_el_certificate = models.ImageField(upload_to='priority/mangilik_el/', null=True, blank=True,
+                                                verbose_name="Справка об обучении по программе 'Мәнгілік ел жастраы ө индустрияға!'(Серпіт ө 2050)")
+    olympiad_winner_certificate = models.ImageField(upload_to='priority/olympiad_winner/', null=True, blank=True,
+                                                    verbose_name="Справка о победах в олимпиадах")
 
     def __str__(self):
         return f"Заявка от {self.student}"

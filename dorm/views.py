@@ -35,19 +35,6 @@ class ApplicationViewSet(generics.ListAPIView):
 
 
 
-# class StudentDetailView(RetrieveUpdateAPIView):
-#     serializer_class = StudentSerializer
-#     permission_classes = [IsAuthenticated]
-#
-#     def get_object(self):
-#         try:
-#             return Student.objects.get(s=self.request.user.student.id)
-#         except Student.DoesNotExist:
-#             raise NotFound("Студент с таким токеном не найден.")
-
-
-
-
 class StudentDetailView(RetrieveUpdateAPIView):
     serializer_class = StudentSerializer
     permission_classes = [IsAuthenticated]
@@ -80,6 +67,11 @@ class ExcelUploadView(APIView):
 
             all_regions = Region.objects.values_list('region_name', flat=True)
 
+            GENDER_MAP = {
+                'мужской': 'M',
+                'женский': 'F',
+            }
+
             for index, row in df.iterrows():
                 region_name = row['region_name']
                 extract_result = process.extractOne(region_name, all_regions)
@@ -103,6 +95,16 @@ class ExcelUploadView(APIView):
                     return Response({"error": f"Неверный формат даты рождения для студента {row['student_s']}"},
                                     status=status.HTTP_400_BAD_REQUEST)
 
+                gender_raw = row.get('gender', '').strip().lower()
+                gender = GENDER_MAP.get(gender_raw)
+
+                if not gender:
+                    return Response(
+                        {"error": f"Некорректное значение пола '{gender_raw}' для студента {row['student_s']}"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+
                 password = birth_date.strftime('%d%m%Y')
 
                 student, created = Student.objects.update_or_create(
@@ -115,6 +117,7 @@ class ExcelUploadView(APIView):
                         'course': row['course'],
                         'email': row['email'],
                         'birth_date': birth_date,
+                        'gender': gender,
                         'is_active': True,
                     }
                 )
