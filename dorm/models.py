@@ -148,30 +148,38 @@ class TestQuestion(models.Model):
 
 
 class Application(models.Model):
-    student = models.ForeignKey(Student, on_delete=models.CASCADE, verbose_name="Студент", related_name="application")
+    STATUS_CHOICES = [
+        ('pending', 'На рассмотрении'),
+        ('approved', 'Одобрено'),
+        ('rejected', 'Отклонено'),
+        ('awaiting_payment', 'Ожидание оплаты'),
+        ('awaiting_order', 'Ожидание ордера'),
+    ]
+    student = models.OneToOneField(Student, on_delete=models.CASCADE, verbose_name="Студент", related_name="application")
     approval = models.BooleanField(default=False, verbose_name="Одобрение")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending', verbose_name="Статус")
     dormitory_choice = models.ForeignKey(Dorm, on_delete=models.SET_NULL, null=True, default=None, verbose_name="Выбор общежития")
     test_answers = models.JSONField(default=dict, verbose_name="Ответы теста")
     test_result = models.CharField(max_length=1, null=True, blank=True, verbose_name="Результат теста")
-    payment_screenshot = models.ImageField(upload_to='payments/', null=True, blank=True, verbose_name="Скрин оплаты")
+    payment_screenshot = models.FileField(upload_to='payments/', null=True, blank=True, verbose_name="Скрин оплаты")
     ent_result = models.PositiveIntegerField(null=True, blank=True, verbose_name="Результат ЕНТ")
     gpa = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True, verbose_name="GPA")
-    priority = models.ImageField(upload_to='priority/', null=True, blank=True, verbose_name="Справка")
-    orphan_certificate = models.ImageField(upload_to='priority/orphan/', null=True, blank=True,
+    priority = models.FileField(upload_to='priority/', null=True, blank=True, verbose_name="Справка")
+    orphan_certificate = models.FileField(upload_to='priority/orphan/', null=True, blank=True,
                                            verbose_name="Справка о сиротстве")
-    disability_1_2_certificate = models.ImageField(upload_to='priority/disability_1_2/', null=True, blank=True,
+    disability_1_2_certificate = models.FileField(upload_to='priority/disability_1_2/', null=True, blank=True,
                                                    verbose_name="Справка об инвалидности 1-2 групп")
-    disability_3_certificate = models.ImageField(upload_to='priority/disability_3/', null=True, blank=True,
+    disability_3_certificate = models.FileField(upload_to='priority/disability_3/', null=True, blank=True,
                                                  verbose_name="Справка об инвалидности 3 группы")
-    parents_disability_certificate = models.ImageField(upload_to='priority/parents_disability/', null=True, blank=True,
+    parents_disability_certificate = models.FileField(upload_to='priority/parents_disability/', null=True, blank=True,
                                                        verbose_name="Справка об инвалидности родителей")
-    loss_of_breadwinner_certificate = models.ImageField(upload_to='priority/loss_of_breadwinner/', null=True, blank=True,
+    loss_of_breadwinner_certificate = models.FileField(upload_to='priority/loss_of_breadwinner/', null=True, blank=True,
                                                         verbose_name="Справка о потере кормильца")
-    social_aid_certificate = models.ImageField(upload_to='priority/social_aid/', null=True, blank=True,
+    social_aid_certificate = models.FileField(upload_to='priority/social_aid/', null=True, blank=True,
                                                verbose_name="Справка о получении государственной социальной помощи")
-    mangilik_el_certificate = models.ImageField(upload_to='priority/mangilik_el/', null=True, blank=True,
+    mangilik_el_certificate = models.FileField(upload_to='priority/mangilik_el/', null=True, blank=True,
                                                 verbose_name="Справка об обучении по программе 'Мәнгілік ел жастраы ө индустрияға!'(Серпіт ө 2050)")
-    olympiad_winner_certificate = models.ImageField(upload_to='priority/olympiad_winner/', null=True, blank=True,
+    olympiad_winner_certificate = models.FileField(upload_to='priority/olympiad_winner/', null=True, blank=True,
                                                     verbose_name="Справка о победах в олимпиадах")
 
     def __str__(self):

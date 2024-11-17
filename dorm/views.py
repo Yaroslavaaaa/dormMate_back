@@ -159,9 +159,36 @@ class CreateApplicationView(APIView):
         except Dorm.DoesNotExist:
             return Response({"error": "Общежитие с таким ID не найдено"}, status=status.HTTP_400_BAD_REQUEST)
 
+        file_fields = [
+            'priority',
+            'orphan_certificate',
+            'disability_1_2_certificate',
+            'disability_3_certificate',
+            'parents_disability_certificate',
+            'loss_of_breadwinner_certificate',
+            'social_aid_certificate',
+            'mangilik_el_certificate',
+            'olympiad_winner_certificate',
+        ]
+
+        for field in file_fields:
+            file = request.FILES.get(field)
+            if file:
+                if file.content_type != 'application/pdf':
+                    return Response(
+                        {"error": f"Поле '{field}' принимает только файлы формата PDF."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
         serializer = ApplicationSerializer(data=request.data)
         if serializer.is_valid():
             application = serializer.save(student=student, dormitory_choice=dormitory_choice)
+            for field in file_fields:
+                file = request.FILES.get(field)
+                if file:
+                    setattr(application, field, file)
+            application.save()
+
             return Response({"message": "Заявка создана", "application_id": application.id},
                             status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -203,27 +230,32 @@ class ApplicationStatusView(APIView):
 
     def get(self, request):
         student_id = request.user.student.id
+        application = Application.objects.filter(student__id=student_id).first()
 
-        applications = Application.objects.filter(student__id=student_id)
-
-        if not applications.exists():
+        if not application:
             return Response({"error": "Заявки не найдены для данного студента"}, status=status.HTTP_404_NOT_FOUND)
 
-        application = applications.first()
-
-        if not application.approval:
+        if application.status == 'pending':
             return Response({"status": "Заявка на рассмотрении"}, status=status.HTTP_200_OK)
 
-        if application.approval and not application.payment_screenshot:
+        if application.status == 'approved':
+            return Response({"status": "Ваша заявка одобрена, внесите оплату и прикрепите сюда чек.",
+                "payment_url": "http://127.0.0.1:8000/api/v1/upload_payment_screenshot/"}, status=status.HTTP_200_OK)
+
+        if application.status == 'rejected':
+            return Response({"status": "Ваша заявка была отклонена."}, status=status.HTTP_200_OK)
+
+        if application.status == 'awaiting_payment':
             return Response({
-                "status": "Заявка одобрена, внесите оплату и прикрепите скрин.",
-                "payment_url": "http://127.0.0.1:8000/api/v1/upload_payment_screenshot/<int:student_id>/"
+                "status": "Ваша заявка одобрена, внесите оплату и прикрепите сюда чек.",
+                "payment_url": "http://127.0.0.1:8000/api/v1/upload_payment_screenshot/"
             }, status=status.HTTP_200_OK)
 
-        if application.approval and application.payment_screenshot:
-            return Response({"status": "Заявка принята, ожидайте ордер."}, status=status.HTTP_200_OK)
+        if application.status == 'awaiting_order':
+            return Response({"status": "Ваша заявка принята, ожидайте ордер на заселение."}, status=status.HTTP_200_OK)
 
         return Response({"error": "Неизвестный статус заявки"}, status=status.HTTP_400_BAD_REQUEST)
+
 
 class UploadPaymentScreenshotView(APIView):
     permission_classes = [IsStudent]
@@ -240,7 +272,11 @@ class UploadPaymentScreenshotView(APIView):
         if not payment_screenshot:
             return Response({"error": "Необходимо прикрепить скрин оплаты"}, status=status.HTTP_400_BAD_REQUEST)
 
+        if payment_screenshot.content_type != "application/pdf":
+            return Response({"error": "Можно загружать только файлы формата PDF"}, status=status.HTTP_400_BAD_REQUEST)
+
         application.payment_screenshot = payment_screenshot
+        application.status = "awaiting_order"
         application.save()
 
         return Response({"message": "Скрин оплаты успешно прикреплен, заявка принята. Ожидайте ордер."}, status=status.HTTP_200_OK)
@@ -272,6 +308,7 @@ class QuestionAnswerViewSet(generics.ListAPIView):
 
 
 class DistributeStudentsAPIView(APIView):
+    permission_classes = [IsAdmin]
 
     def post(self, request, *args, **kwargs):
         total_places = Dorm.objects.aggregate(total_places=models.Sum('total_places'))['total_places']
@@ -279,7 +316,7 @@ class DistributeStudentsAPIView(APIView):
         if not total_places or total_places <= 0:
             return Response({"detail": "Нет доступных мест в общежитиях."}, status=status.HTTP_400_BAD_REQUEST)
 
-        pending_applications = Application.objects.filter(approval=False).select_related('student').order_by(
+        pending_applications = Application.objects.filter(approval=False, status="pending").select_related('student').order_by(
             '-priority',
             'student__course'
         )
@@ -289,6 +326,12 @@ class DistributeStudentsAPIView(APIView):
         with transaction.atomic():
             for application in selected_applications:
                 application.approval = True
+                application.status = "awaiting_payment"
+                application.save()
+
+            rejected_applications = pending_applications[total_places:]
+            for application in rejected_applications:
+                application.status = "rejected"
                 application.save()
 
         return Response(
@@ -304,6 +347,7 @@ class DistributeStudentsAPIView(APIView):
 
 
 class DistributeStudentsAPIView2(APIView):
+    permission_classes = [IsAdmin]
 
     def post(self, request, *args, **kwargs):
         dorms = Dorm.objects.all()
