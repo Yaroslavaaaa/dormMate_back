@@ -164,7 +164,6 @@ class Application(models.Model):
     payment_screenshot = models.FileField(upload_to='payments/', null=True, blank=True, verbose_name="Скрин оплаты")
     ent_result = models.PositiveIntegerField(null=True, blank=True, verbose_name="Результат ЕНТ")
     gpa = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True, verbose_name="GPA")
-    priority = models.FileField(upload_to='priority/', null=True, blank=True, verbose_name="Справка")
     orphan_certificate = models.FileField(upload_to='priority/orphan/', null=True, blank=True,
                                            verbose_name="Справка о сиротстве")
     disability_1_2_certificate = models.FileField(upload_to='priority/disability_1_2/', null=True, blank=True,
@@ -178,9 +177,9 @@ class Application(models.Model):
     social_aid_certificate = models.FileField(upload_to='priority/social_aid/', null=True, blank=True,
                                                verbose_name="Справка о получении государственной социальной помощи")
     mangilik_el_certificate = models.FileField(upload_to='priority/mangilik_el/', null=True, blank=True,
-                                                verbose_name="Справка об обучении по программе 'Мәнгілік ел жастраы ө индустрияға!'(Серпіт ө 2050)")
+                                                verbose_name="Справка об обучении по программе 'Мәнгілік ел жастраы - индустрияға!'(Серпіт ө 2050)")
     olympiad_winner_certificate = models.FileField(upload_to='priority/olympiad_winner/', null=True, blank=True,
-                                                    verbose_name="Справка о победах в олимпиадах")
+                                                    verbose_name="Сертификаты о победах в олимпиадах")
 
     def __str__(self):
         return f"Заявка от {self.student}"
