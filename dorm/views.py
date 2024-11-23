@@ -307,6 +307,9 @@ class QuestionAnswerViewSet(generics.ListAPIView):
         return QuestionOnlySerializer
 
 
+
+
+
 class DistributeStudentsAPIView(APIView):
     permission_classes = [IsAdmin]
 
@@ -316,12 +319,35 @@ class DistributeStudentsAPIView(APIView):
         if not total_places or total_places <= 0:
             return Response({"detail": "Нет доступных мест в общежитиях."}, status=status.HTTP_400_BAD_REQUEST)
 
-        pending_applications = Application.objects.filter(approval=False, status="pending").select_related('student').order_by(
-            '-priority',
-            'student__course'
+        pending_applications = Application.objects.filter(approval=False, status="pending").select_related('student')
+
+        print(f"Всего заявок: {len(pending_applications)}")
+
+        sorted_applications = sorted(
+            pending_applications,
+            key=lambda app: (
+                bool(app.orphan_certificate) or bool(app.disability_1_2_certificate),
+                bool(app.disability_3_certificate) or
+                bool(app.parents_disability_certificate) or
+                bool(app.loss_of_breadwinner_certificate) or
+                bool(app.social_aid_certificate),
+                bool(app.mangilik_el_certificate),
+                1 if app.student.course == "1" and app.olympiad_winner_certificate else 0,
+                1 if app.student.course == "1" else 0,
+                -(app.ent_result or 0) if app.student.course == "1" else 0,
+                0 if app.student.course == "1" else -(app.gpa or 0),
+                app.id
+            ),
+            reverse=True,
         )
 
-        selected_applications = pending_applications[:total_places]
+        selected_applications = sorted_applications[:total_places]
+        rejected_applications = sorted_applications[total_places:]
+
+        print(f"Одобренных: {len(selected_applications)}")
+        print(f"Отклоненных: {len(rejected_applications)}")
+
+        approved_students = []
 
         with transaction.atomic():
             for application in selected_applications:
@@ -329,19 +355,28 @@ class DistributeStudentsAPIView(APIView):
                 application.status = "awaiting_payment"
                 application.save()
 
-            rejected_applications = pending_applications[total_places:]
+                print(f"Одобрен: {application.student.first_name}, Курс: {application.student.course}")
+
+                approved_students.append({
+                    "student_s": getattr(application.student, "s", "Нет S"),
+                    "first_name": getattr(application.student, 'first_name', 'Нет имени'),
+                    "last_name": getattr(application.student, 'last_name', 'Нет имени'),
+                    "course": getattr(application.student, 'course', 'Не указан'),
+                    "ent_result": application.ent_result,
+                    "gpa": application.gpa,
+                })
+
             for application in rejected_applications:
                 application.status = "rejected"
                 application.save()
 
         return Response(
-            {"detail": f"{len(selected_applications)} студентов были одобрены для заселения."},
+            {
+                "detail": f"{len(selected_applications)} студентов были одобрены для заселения.",
+                "approved_students": approved_students
+            },
             status=status.HTTP_200_OK
         )
-
-
-
-
 
 
 
@@ -365,6 +400,8 @@ class DistributeStudentsAPIView2(APIView):
         for test_result, apps in grouped_applications.items():
             print(f"Количество студентов с результатом теста '{test_result}': {len(apps)}")
 
+        allocated_students = []
+
         with transaction.atomic():
             for dorm in dorms:
                 room_counts = {
@@ -373,7 +410,9 @@ class DistributeStudentsAPIView2(APIView):
                     4: dorm.rooms_for_four
                 }
 
-                room_number = 1
+                room_number = 101
+                room_suffix = 'А'
+
                 for room_size, available_rooms in room_counts.items():
                     for _ in range(available_rooms):
                         students_for_room = []
@@ -401,26 +440,42 @@ class DistributeStudentsAPIView2(APIView):
                         if len(students_for_room) == 0:
                             continue
 
+                        room_label = f"{room_number}-{room_suffix}"
                         print(f"Комната размером {room_size} в общежитии {dorm.id} получает студентов:",
                               [student_application.student.id for student_application in students_for_room])
 
                         for student_application in students_for_room:
-                            StudentInDorm.objects.create(
+                            student_in_dorm = StudentInDorm.objects.create(
                                 student_id=student_application.student,
                                 dorm_id=dorm,
-                                room=f"{dorm.id}-{room_number}",
+                                room=room_label,
                                 application_id=student_application
                             )
+                            allocated_students.append({
+                                "student_s": getattr(student_in_dorm.student_id, "s", "Нет S"),
+                                "first_name": getattr(student_in_dorm.student_id, "first_name", "Нет имени"),
+                                "last_name": getattr(student_in_dorm.student_id, "last_name", "Нет фамилии"),
+                                "dorm_id": getattr(student_in_dorm.dorm_id, "name", "Нет фамилии"),
+                                "room": student_in_dorm.room
+                            })
 
-                        room_number += 1
+                        if room_suffix == 'А':
+                            room_suffix = 'Б'
+                        else:
+                            room_suffix = 'А'
+                            room_number += 1
 
-        allocated_count = StudentInDorm.objects.count()
+        allocated_count = len(allocated_students)
         print("Общее количество студентов, добавленных в StudentInDorm:", allocated_count)
 
         return Response(
-            {"detail": "Студенты успешно распределены по комнатам."},
+            {
+                "detail": "Студенты успешно распределены по комнатам.",
+                "allocated_students": allocated_students
+            },
             status=status.HTTP_200_OK
         )
+
 
 
 
