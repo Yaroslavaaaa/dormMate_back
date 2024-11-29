@@ -543,12 +543,14 @@ class ChangePasswordView(APIView):
 
         return Response({"message": "Password successfully updated."}, status=status.HTTP_200_OK)
 
-    class ApplicationViewSet(generics.ListAPIView):
+
+
+class ApplicationViewSet(generics.ListAPIView):
         queryset = Application.objects.all()
         serializer_class = ApplicationSerializer
         permission_classes = [IsAdmin]
 
-    class ApproveStudentApplicationAPIView(APIView):
+class ApproveStudentApplicationAPIView(APIView):
         permission_classes = [IsAdmin]
 
         def put(self, request, application_id, *args, **kwargs):
@@ -569,7 +571,8 @@ class ChangePasswordView(APIView):
                 status=status.HTTP_200_OK
             )
 
-    class DeleteStudentApplicationAPIView(APIView):
+
+class DeleteStudentApplicationAPIView(APIView):
         permission_classes = [IsAdmin]
 
         def delete(self, request, application_id, *args, **kwargs):
@@ -580,6 +583,7 @@ class ChangePasswordView(APIView):
 
             application.delete()
             return Response({"message": "Заявка успешно удалена"}, status=status.HTTP_200_OK)
+
 
 
 class ChangeStudentDormitoryAPIView(APIView):
