@@ -29,5 +29,5 @@ urlpatterns = [
     path('api/v1/applications/<int:application_id>/delete/', DeleteStudentApplicationAPIView.as_view(), name='delete_application'),
     path('api/v1/applications', ApplicationViewSet.as_view(), name='applications'),
     path('api/v1/applications/<int:application_id>/approve/',ApproveStudentApplicationAPIView.as_view(), name='approve_application'),
-
+    path('api/v1/applications/<int:application_id>/change-dormitory/', ChangeStudentDormitoryAPIView.as_view(),name='change_dormitory'),
 ]

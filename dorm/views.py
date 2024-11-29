@@ -580,3 +580,45 @@ class ChangePasswordView(APIView):
 
             application.delete()
             return Response({"message": "Заявка успешно удалена"}, status=status.HTTP_200_OK)
+
+
+class ChangeStudentDormitoryAPIView(APIView):
+    permission_classes = [IsAdmin]
+
+    def put(self, request, application_id, *args, **kwargs):
+        try:
+            application = Application.objects.get(id=application_id)
+        except Application.DoesNotExist:
+            return Response({"error": "Заявка с таким ID не найдена"}, status=status.HTTP_404_NOT_FOUND)
+
+        dormitory_name = request.data.get('dorm_name')
+        if not dormitory_name:
+            return Response({"error": "Не указано имя общежития"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            dormitory = Dorm.objects.get(name=dormitory_name)
+        except Dorm.DoesNotExist:
+            return Response({"error": "Общежитие с таким именем не найдено"}, status=status.HTTP_400_BAD_REQUEST)
+
+        application.dormitory_choice = dormitory
+        application.save()
+
+        student = application.student
+        student_in_dorm, created = StudentInDorm.objects.update_or_create(
+            student_id=student,
+            application_id=application,
+            defaults={
+                'dorm_id': dormitory,
+                'room': None,
+            }
+        )
+
+        return Response(
+            {
+                "message": "Общежитие для студента успешно изменено",
+                "application_id": application.id,
+                "dormitory_choice": dormitory.name,
+                "student_in_dorm_created": created,
+            },
+            status=status.HTTP_200_OK
+        )
