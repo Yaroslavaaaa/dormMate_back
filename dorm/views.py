@@ -542,3 +542,41 @@ class ChangePasswordView(APIView):
         user.save()
 
         return Response({"message": "Password successfully updated."}, status=status.HTTP_200_OK)
+
+    class ApplicationViewSet(generics.ListAPIView):
+        queryset = Application.objects.all()
+        serializer_class = ApplicationSerializer
+        permission_classes = [IsAdmin]
+
+    class ApproveStudentApplicationAPIView(APIView):
+        permission_classes = [IsAdmin]
+
+        def put(self, request, application_id, *args, **kwargs):
+            try:
+                application = Application.objects.get(id=application_id)
+            except Application.DoesNotExist:
+                return Response({"error": "Заявка с таким ID не найдена"}, status=status.HTTP_404_NOT_FOUND)
+
+            application.status = "approved"
+            additional_notes = request.data.get("notes")
+            if additional_notes:
+                application.notes = additional_notes
+
+            application.save()
+
+            return Response(
+                {"message": "Заявка успешно одобрена", "application_id": application.id},
+                status=status.HTTP_200_OK
+            )
+
+    class DeleteStudentApplicationAPIView(APIView):
+        permission_classes = [IsAdmin]
+
+        def delete(self, request, application_id, *args, **kwargs):
+            try:
+                application = Application.objects.get(id=application_id)
+            except Application.DoesNotExist:
+                return Response({"error": "Заявка с таким ID не найдена"}, status=status.HTTP_404_NOT_FOUND)
+
+            application.delete()
+            return Response({"message": "Заявка успешно удалена"}, status=status.HTTP_200_OK)

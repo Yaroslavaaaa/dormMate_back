@@ -42,3 +42,40 @@ class StudentInDormAdmin(admin.ModelAdmin):
     list_display = ('student_id', 'dorm_id', 'room', 'application_id', 'order')
     actions = [export_students_in_dorm_to_excel]
 
+class ApplicationAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'student',
+        'dormitory_choice',
+        'status',
+        'approval',
+        'created_at',
+    )
+    list_filter = ('status', 'approval', 'dormitory_choice')
+    search_fields = ('student_first_name', 'studentlast_name', 'dormitory_choice_name', 'status')
+    actions = ['approve_application', 'reject_application']
+
+    def approve_application(self, request, queryset):
+        for application in queryset:
+            print(f"Заявка {application.id} одобрена администратором {request.user}")
+        queryset.update(status='approved', approval=True)
+        self.message_user(request, "Выбранные заявки одобрены.")
+
+    def reject_application(self, request, queryset):
+        for application in queryset:
+            print(f"Заявка {application.id} отклонена администратором {request.user}")
+        queryset.update(status='rejected', approval=False)
+        self.message_user(request, "Выбранные заявки отклонены.")
+
+    approve_application.short_description = "Одобрить заявки"
+    reject_application.short_description = "Отклонить заявки"
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.status = 'pending'
+        super().save_model(request, obj, form, change)
+
+    def delete_model(self, request, obj):
+        print(f"Заявка {obj.id} удалена администратором {request.user}")
+        super().delete_model(request, obj)
+
