@@ -15,6 +15,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.exceptions import NotFound
 from django.contrib.auth import authenticate
 from django.http import HttpResponse
+from io import BytesIO
+import openpyxl
 
 class StudentViewSet(generics.ListAPIView):
     queryset = Student.objects.all()
@@ -381,6 +383,8 @@ class DistributeStudentsAPIView(APIView):
 
 
 
+
+
 class DistributeStudentsAPIView2(APIView):
     permission_classes = [IsAdmin]
 
@@ -626,3 +630,45 @@ class ChangeStudentDormitoryAPIView(APIView):
             },
             status=status.HTTP_200_OK
         )
+
+
+
+
+class ExportStudentInDormExcelView(APIView):
+
+    permission_classes = [IsAdmin]
+
+    def get(self, request, *args, **kwargs):
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "Студенты в общежитиях"
+
+        headers = ["S Студента", "Фамилия", "Имя", "Отчество", "Общежитие", "Комната", "ID Заявления", "Ордер"]
+        sheet.append(headers)
+
+        students_in_dorm = StudentInDorm.objects.select_related('student_id', 'dorm_id', 'application_id')
+        for student_dorm in students_in_dorm:
+            student = student_dorm.student_id
+            row = [
+                getattr(student, 's', "Нет данных"),
+                getattr(student, 'last_name', "Нет данных"),
+                getattr(student, 'first_name', "Нет данных"),
+                getattr(student, 'middle_name', "Нет данных"),
+                getattr(student_dorm.dorm_id, 'name', "Нет данных"),
+                student_dorm.room or "Нет данных",
+                student_dorm.application_id.id if student_dorm.application_id else "Нет данных",
+                student_dorm.order.url if student_dorm.order else "Нет"
+            ]
+            sheet.append(row)
+
+        output = BytesIO()
+        workbook.save(output)
+        output.seek(0)
+
+        response = HttpResponse(
+            output,
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+        response['Content-Disposition'] = 'attachment; filename="students_in_dorm.xlsx"'
+
+        return response
