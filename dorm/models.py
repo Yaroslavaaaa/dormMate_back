@@ -154,6 +154,7 @@ class Application(models.Model):
         ('rejected', 'Отклонено'),
         ('awaiting_payment', 'Ожидание оплаты'),
         ('awaiting_order', 'Ожидание ордера'),
+        ('order', 'Ордер получен'),
     ]
     student = models.OneToOneField(Student, on_delete=models.CASCADE, verbose_name="Студент", related_name="application")
     approval = models.BooleanField(default=False, verbose_name="Одобрение")

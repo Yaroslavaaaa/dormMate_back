@@ -307,6 +307,11 @@ class ApplicationStatusView(APIView):
         if application.status == 'awaiting_order':
             return Response({"status": "Ваша заявка принята, ожидайте ордер на заселение."}, status=status.HTTP_200_OK)
 
+        dormitory_name = application.dormitory_choice.name if application.dormitory_choice else "общага"
+
+        if application.status == 'order':
+            return Response({"status": f"Поздравляем! Вам выдан ордер в общагу: {dormitory_name}."}, status=status.HTTP_200_OK)
+
         return Response({"error": "Неизвестный статус заявки"}, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -506,6 +511,10 @@ class DistributeStudentsAPIView2(APIView):
                                 room=room_label,
                                 application_id=student_application
                             )
+
+                            student_application.status = 'order'
+                            student_application.save()
+
                             allocated_students.append({
                                 "student_s": getattr(student_in_dorm.student_id, "s", "Нет S"),
                                 "first_name": getattr(student_in_dorm.student_id, "first_name", "Нет имени"),
