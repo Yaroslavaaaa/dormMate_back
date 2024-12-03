@@ -18,13 +18,29 @@ class TestQuestionSerializer(serializers.ModelSerializer):
         model = TestQuestion
         fields = "__all__"
 
+# class ApplicationSerializer(serializers.ModelSerializer):
+#     student = StudentSerializer(read_only=True)
+#
+#     class Meta:
+#         model = Application
+#         fields = ['student', 'dormitory_choice']
+#         # fields = '__all__'
+
+
 class ApplicationSerializer(serializers.ModelSerializer):
     student = StudentSerializer(read_only=True)
+    dormitory_name = serializers.CharField(source='dormitory.name', read_only=True)
 
     class Meta:
         model = Application
-        fields = ['student', 'dormitory_choice']
-        # fields = '__all__'
+        fields = '__all__'  # Все поля модели Application
+        extra_fields = ['dormitory_name']  # Добавляемое поле
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        representation['dormitory_name'] = instance.dormitory_choice.name if instance.dormitory_choice else None
+        return representation
+
 
 class ExcelUploadSerializer(serializers.Serializer):
     file = serializers.FileField()
