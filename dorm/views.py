@@ -21,6 +21,8 @@ from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from .serializers import ApplicationSerializer
 from django.views.generic import View
+from django.core.mail import send_mail
+from django.conf import settings
 
 class StudentViewSet(generics.ListAPIView):
     queryset = Student.objects.all()
@@ -475,33 +477,13 @@ class DistributeStudentsAPIView2(APIView):
 
                 for room_size, available_rooms in room_counts.items():
                     for _ in range(available_rooms):
-                        students_for_room = []
-                        for test_result, test_group in grouped_applications.items():
-                            if len(test_group) >= room_size:
-                                students_for_room = [
-                                    student for student in test_group[:room_size]
-                                    if not StudentInDorm.objects.filter(student_id=student.student).exists()
-                                ]
-                                grouped_applications[test_result] = [
-                                    student for student in test_group if student not in students_for_room
-                                ]
-                                break
+                        students_for_room = self.get_students_for_room(grouped_applications, room_size)
 
-                        if len(students_for_room) != room_size:
-                            remaining_students = [
-                                student for group in grouped_applications.values() for student in group
-                                if not StudentInDorm.objects.filter(student_id=student.student).exists()
-                            ]
-                            if remaining_students:
-                                students_for_room = remaining_students[:room_size]
-                                for student in students_for_room:
-                                    grouped_applications[student.test_result].remove(student)
-
-                        if len(students_for_room) == 0:
+                        if not students_for_room:
                             continue
 
-                        room_label = f"{room_number}-{room_suffix}"
-                        print(f"Комната размером {room_size} в общежитии {dorm.id} получает студентов:",
+                        room_label = f"{room_number}{room_suffix}"
+                        print(f"Комната размером {room_size} в общежитии {dorm.id} получает студентов: ",
                               [student_application.student.id for student_application in students_for_room])
 
                         for student_application in students_for_room:
@@ -516,18 +498,14 @@ class DistributeStudentsAPIView2(APIView):
                             student_application.save()
 
                             allocated_students.append({
-                                "student_s": getattr(student_in_dorm.student_id, "s", "Нет S"),
-                                "first_name": getattr(student_in_dorm.student_id, "first_name", "Нет имени"),
-                                "last_name": getattr(student_in_dorm.student_id, "last_name", "Нет фамилии"),
-                                "dorm_id": getattr(student_in_dorm.dorm_id, "name", "Нет фамилии"),
+                                "student_email": student_in_dorm.student_id.email,
+                                "dorm_name": getattr(student_in_dorm.dorm_id, "name", "Общежитие"),
                                 "room": student_in_dorm.room
                             })
 
-                        if room_suffix == 'А':
-                            room_suffix = 'Б'
-                        else:
-                            room_suffix = 'А'
-                            room_number += 1
+                        room_suffix, room_number = self.update_room_label(room_suffix, room_number)
+
+        self.send_emails(allocated_students)
 
         allocated_count = len(allocated_students)
         print("Общее количество студентов, добавленных в StudentInDorm:", allocated_count)
@@ -539,6 +517,50 @@ class DistributeStudentsAPIView2(APIView):
             },
             status=status.HTTP_200_OK
         )
+
+    def get_students_for_room(self, grouped_applications, room_size):
+
+        for test_result, test_group in grouped_applications.items():
+            if len(test_group) >= room_size:
+                students_for_room = [
+                    student for student in test_group[:room_size]
+                    if not StudentInDorm.objects.filter(student_id=student.student).exists()
+                ]
+                grouped_applications[test_result] = [
+                    student for student in test_group if student not in students_for_room
+                ]
+                return students_for_room
+
+        remaining_students = [
+            student for group in grouped_applications.values() for student in group
+            if not StudentInDorm.objects.filter(student_id=student.student).exists()
+        ]
+        if remaining_students:
+            students_for_room = remaining_students[:room_size]
+            for student in students_for_room:
+                grouped_applications[student.test_result].remove(student)
+            return students_for_room
+
+        return []
+
+    def update_room_label(self, room_suffix, room_number):
+        if room_suffix == 'А':
+            return 'Б', room_number
+        else:
+            return 'А', room_number + 1
+
+    def send_emails(self, allocated_students):
+        for student in allocated_students:
+            if student["student_email"]:
+                send_mail(
+                    subject="Ордер на заселение в общежитие",
+                    message=f"Поздравляем, вам был выдан ордер на заселение в общежитие!\n"
+                            f"Общежитие: {student['dorm_name']}\n"
+                            f"Комната: {student['room']}",
+                    from_email=settings.EMAIL_HOST_USER,
+                    recipient_list=[student["student_email"]],
+                    fail_silently=False,
+                )
 
 
 
