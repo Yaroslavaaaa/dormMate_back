@@ -31,4 +31,6 @@ urlpatterns = [
     path('api/v1/applications/<int:application_id>/approve/',ApproveStudentApplicationAPIView.as_view(), name='approve_application'),
     path('api/v1/applications/<int:application_id>/change-dormitory/', ChangeStudentDormitoryAPIView.as_view(),name='change_dormitory'),
     path('api/v1/export-students/', ExportStudentInDormExcelView.as_view(), name='export_students_excel'),
+    path('api/v1/applications/<int:pk>/', ApplicationDetailView.as_view(), name='application-detail'),
+    path('api/v1/applications/<int:pk>/files/<str:field_name>/', PDFView.as_view(), name='pdf-view'),
 ]

@@ -17,6 +17,10 @@ from django.contrib.auth import authenticate
 from django.http import HttpResponse
 from io import BytesIO
 import openpyxl
+from django.http import FileResponse
+from django.shortcuts import get_object_or_404
+from .serializers import ApplicationSerializer
+from django.views.generic import View
 
 class StudentViewSet(generics.ListAPIView):
     queryset = Student.objects.all()
@@ -35,7 +39,10 @@ class ApplicationViewSet(generics.ListAPIView):
     serializer_class = ApplicationSerializer
 
 
-
+class IsAdmin(IsAuthenticated):
+    def has_permission(self, request, view):
+        is_authenticated = super().has_permission(request, view)
+        return is_authenticated and (hasattr(request.user, 'admin') or request.user.is_superuser)
 
 class StudentDetailView(RetrieveUpdateAPIView):
     serializer_class = StudentSerializer
@@ -48,10 +55,54 @@ class StudentDetailView(RetrieveUpdateAPIView):
             raise NotFound("Студент с таким токеном не найден.")
 
 
-class IsAdmin(IsAuthenticated):
-    def has_permission(self, request, view):
-        is_authenticated = super().has_permission(request, view)
-        return is_authenticated and (hasattr(request.user, 'admin') or request.user.is_superuser)
+class ApplicationDetailView(RetrieveUpdateAPIView):
+    queryset = Application.objects.all()
+    serializer_class = ApplicationSerializer
+    permission_classes = [IsAdmin]
+
+    def get(self, request, *args, **kwargs):
+        application_id = kwargs.get('pk')
+        application = get_object_or_404(Application, id=application_id)
+
+        serialized_data = self.get_serializer(application).data
+
+        file_fields = [
+            'payment_screenshot',
+            'orphan_certificate',
+            'disability_1_2_certificate',
+            'disability_3_certificate',
+            'parents_disability_certificate',
+            'loss_of_breadwinner_certificate',
+            'social_aid_certificate',
+            'mangilik_el_certificate',
+            'olympiad_winner_certificate',
+        ]
+
+        serialized_data['files'] = [
+            {
+                'field_name': field,
+                'url': getattr(application, field).url if getattr(application, field) else None,
+                'name': getattr(application, field).name if getattr(application, field) else None
+            }
+            for field in file_fields if getattr(application, field)
+        ]
+
+        return Response(serialized_data)
+
+
+
+class PDFView(View):
+    def get(self, request, pk, field_name):
+        application = get_object_or_404(Application, id=pk)
+        file = getattr(application, field_name, None)
+
+        if file and file.name.endswith('.pdf'):
+            return FileResponse(file.open('rb'), content_type='application/pdf')
+        return Response({'error': 'The requested file is not a PDF or does not exist.'}, status=400)
+
+
+
+
 
 class ExcelUploadView(APIView):
     permission_classes = [IsAdmin]
