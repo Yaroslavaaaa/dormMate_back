@@ -56,7 +56,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     last_name = models.CharField(max_length=30, blank=True)
     middle_name = models.CharField(max_length=100, verbose_name="Отчество", blank=True, null=True)
     email = models.EmailField(blank=True)
-    birth_date = models.DateField(verbose_name="Дата рождения",blank=True, null=True)
+    birth_date = models.DateField(verbose_name="Дата рождения", blank=True, null=True)
+    phone_number = models.CharField(max_length=11, blank=True, null=True)
     gender = models.CharField(
         max_length=1,
         choices=GENDER_CHOICES,

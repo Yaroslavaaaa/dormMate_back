@@ -46,16 +46,22 @@ class ExcelUploadSerializer(serializers.Serializer):
     file = serializers.FileField()
 
 class CustomTokenObtainSerializer(serializers.Serializer):
-    s = serializers.CharField()
+    s = serializers.CharField(required=False)
+    phone_number = serializers.CharField(required=False)
     password = serializers.CharField(write_only=True)
 
     def validate(self, data):
         s = data.get('s')
+        phone_number = data.get('phone_number')
         password = data.get('password')
 
-        if s and password:
-            user = authenticate(request=self.context.get('request'), s=s, password=password)
-            print(s, password)
+        if (s or phone_number) and password:
+            user = authenticate(
+                request=self.context.get('request'),
+                s=s,
+                phone_number=phone_number,
+                password=password
+            )
             if user:
                 if not user.is_active:
                     raise serializers.ValidationError('User is inactive')
@@ -68,7 +74,7 @@ class CustomTokenObtainSerializer(serializers.Serializer):
             else:
                 raise serializers.ValidationError('Invalid credentials')
         else:
-            raise serializers.ValidationError('Must include "s" and "password"')
+            raise serializers.ValidationError('Must include "s" or "phone_number" and "password"')
 
 class QuestionAnswerSerializer(serializers.ModelSerializer):
     class Meta:
