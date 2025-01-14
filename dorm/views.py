@@ -14,7 +14,7 @@ from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.exceptions import NotFound
 from django.contrib.auth import authenticate
-from django.http import HttpResponse
+from django.http import HttpResponse, Http404
 from io import BytesIO
 import openpyxl
 from django.http import FileResponse
@@ -101,6 +101,17 @@ class PDFView(View):
         if file and file.name.endswith('.pdf'):
             return FileResponse(file.open('rb'), content_type='application/pdf')
         return Response({'error': 'The requested file is not a PDF or does not exist.'}, status=400)
+
+
+
+class PaymentScreenshotView(View):
+    def get(self, request, pk):
+        application = get_object_or_404(Application, id=pk)
+        file = application.payment_screenshot
+
+        if file and file.name.endswith('.pdf'):
+            return FileResponse(file.open('rb'), content_type='application/pdf')
+        raise Http404("Скрин оплаты не найден или формат файла не поддерживается.")
 
 
 
@@ -656,6 +667,30 @@ class ApproveStudentApplicationAPIView(APIView):
                 {"message": "Заявка успешно одобрена", "application_id": application.id},
                 status=status.HTTP_200_OK
             )
+
+
+
+class RejectStudentApplicationAPIView(APIView):
+    permission_classes = [IsAdmin]
+
+    def put(self, request, application_id, *args, **kwargs):
+        try:
+            application = Application.objects.get(id=application_id)
+        except Application.DoesNotExist:
+            return Response({"error": "Заявка с таким ID не найдена"}, status=status.HTTP_404_NOT_FOUND)
+
+        application.status = "rejected"
+        additional_notes = request.data.get("notes")
+        if additional_notes:
+            application.notes = additional_notes
+
+        application.save()
+
+        return Response(
+            {"message": "Заявка успешно отклонена", "application_id": application.id},
+            status=status.HTTP_200_OK
+        )
+
 
 
 class DeleteStudentApplicationAPIView(APIView):
