@@ -1,7 +1,14 @@
 from django.contrib import admin
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
 from dorm.views import *
+
+
+
+router = DefaultRouter()
+router.register(r'dorms', DormsViewSet, basename='dorm')
+router.register(r'students', StudentsViewSet, basename='students')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -35,4 +42,6 @@ urlpatterns = [
     path('api/v1/applications/<int:pk>/', ApplicationDetailView.as_view(), name='application-detail'),
     path('api/v1/applications/<int:pk>/files/<str:field_name>/', PDFView.as_view(), name='pdf-view'),
     path('api/v1/applications/<int:pk>/payment-screenshot/', PaymentScreenshotView.as_view(), name='payment_screenshot'),
+    path('api/v1/', include(router.urls)),
+    path('api/v1/applications/', ApplicationListView.as_view(), name='application-list'),
 ]

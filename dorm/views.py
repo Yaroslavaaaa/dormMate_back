@@ -19,10 +19,12 @@ from io import BytesIO
 import openpyxl
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
-from .serializers import ApplicationSerializer
 from django.views.generic import View
 from django.core.mail import send_mail
 from django.conf import settings
+from rest_framework.generics import ListAPIView
+from django.db.models import F, Case, When, Value, IntegerField
+from rest_framework.exceptions import ValidationError
 
 class StudentViewSet(generics.ListAPIView):
     queryset = Student.objects.all()
@@ -789,3 +791,78 @@ class ExportStudentInDormExcelView(APIView):
         response['Content-Disposition'] = 'attachment; filename="students_in_dorm.xlsx"'
 
         return response
+
+
+
+class DormsViewSet(viewsets.ModelViewSet):
+    queryset = Dorm.objects.all()
+    serializer_class = DormSerializer
+    # permission_classes = [IsAdmin]
+
+
+
+
+class StudentsViewSet(viewsets.ModelViewSet):
+    queryset = Student.objects.all()
+    serializer_class = StudentSerializer
+    # permission_classes = [IsAdmin]
+
+    def perform_create(self, serializer):
+        s_value = serializer.validated_data.get('s')
+        if Student.objects.filter(s=s_value).exists():
+            raise ValidationError(f"Student with s = {s_value} already exists.")
+
+        serializer.save()
+
+
+class ApplicationListView(ListAPIView):
+    serializer_class = ApplicationSerializer
+
+    def get_queryset(self):
+        queryset = Application.objects.select_related('student')
+        ordering = self.request.query_params.get('ordering', 'priority')
+
+        if ordering == 'gpa':
+            queryset = queryset.annotate(
+                sort_key=Case(
+                    When(student__course="1", then=F('ent_result')),
+                    default=F('gpa'),
+                    output_field=IntegerField()
+                )
+            ).order_by(
+                Case(When(student__course="1", then=Value(1)), default=Value(0)).asc(),
+                F('sort_key').desc()
+            )
+
+        elif ordering == 'ent':
+            queryset = queryset.annotate(
+                sort_key=Case(
+                    When(student__course="1", then=F('ent_result')),
+                    default=F('gpa'),
+                    output_field=IntegerField()
+                )
+            ).order_by(
+                Case(When(student__course="1", then=Value(0)), default=Value(1)),
+                F('sort_key').desc()
+            )
+
+        else:  # Default sorting by priority
+            queryset = sorted(
+                queryset,
+                key=lambda app: (
+                    bool(app.orphan_certificate) or bool(app.disability_1_2_certificate),
+                    bool(app.disability_3_certificate) or
+                    bool(app.parents_disability_certificate) or
+                    bool(app.loss_of_breadwinner_certificate) or
+                    bool(app.social_aid_certificate),
+                    bool(app.mangilik_el_certificate),
+                    1 if app.student.course == "1" and app.olympiad_winner_certificate else 0,
+                    1 if app.student.course == "1" else 0,
+                    -(app.ent_result or 0) if app.student.course == "1" else 0,
+                    0 if app.student.course == "1" else -(app.gpa or 0),
+                    app.id
+                ),
+                reverse=True,
+            )
+
+        return queryset
