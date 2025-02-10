@@ -58,6 +58,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(blank=True)
     birth_date = models.DateField(verbose_name="Дата рождения", blank=True, null=True)
     phone_number = models.CharField(max_length=11, blank=True, null=True)
+    avatar = models.ImageField(blank=True, default='avatar/no-avatar.png')
     gender = models.CharField(
         max_length=1,
         choices=GENDER_CHOICES,

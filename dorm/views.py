@@ -23,8 +23,9 @@ from django.views.generic import View
 from django.core.mail import send_mail
 from django.conf import settings
 from rest_framework.generics import ListAPIView
-from django.db.models import F, Case, When, Value, IntegerField
+from django.db.models import F, Case, When, Value, IntegerField, BooleanField
 from rest_framework.exceptions import ValidationError
+
 
 class StudentViewSet(generics.ListAPIView):
     queryset = Student.objects.all()
@@ -184,6 +185,7 @@ class ExcelUploadView(APIView):
                         'region': region,
                         'course': row['course'],
                         'email': row['email'],
+                        'phone_number': row['phone_number'],
                         'birth_date': birth_date,
                         'gender': gender,
                         'is_active': True,
@@ -815,6 +817,7 @@ class StudentsViewSet(viewsets.ModelViewSet):
         serializer.save()
 
 
+
 class ApplicationListView(ListAPIView):
     serializer_class = ApplicationSerializer
 
@@ -847,22 +850,49 @@ class ApplicationListView(ListAPIView):
             )
 
         else:  # Default sorting by priority
-            queryset = sorted(
-                queryset,
-                key=lambda app: (
-                    bool(app.orphan_certificate) or bool(app.disability_1_2_certificate),
-                    bool(app.disability_3_certificate) or
-                    bool(app.parents_disability_certificate) or
-                    bool(app.loss_of_breadwinner_certificate) or
-                    bool(app.social_aid_certificate),
-                    bool(app.mangilik_el_certificate),
-                    1 if app.student.course == "1" and app.olympiad_winner_certificate else 0,
-                    1 if app.student.course == "1" else 0,
-                    -(app.ent_result or 0) if app.student.course == "1" else 0,
-                    0 if app.student.course == "1" else -(app.gpa or 0),
-                    app.id
+            queryset = queryset.annotate(
+                orphan=Case(
+                    When(orphan_certificate__isnull=False, then=Value(True)),
+                    When(disability_1_2_certificate__isnull=False, then=Value(True)),
+                    default=Value(False),
+                    output_field=BooleanField()
                 ),
-                reverse=True,
+                social=Case(
+                    When(disability_3_certificate__isnull=False, then=Value(True)),
+                    When(parents_disability_certificate__isnull=False, then=Value(True)),
+                    When(loss_of_breadwinner_certificate__isnull=False, then=Value(True)),
+                    When(social_aid_certificate__isnull=False, then=Value(True)),
+                    default=Value(False),
+                    output_field=BooleanField()
+                ),
+                mangilik=Case(
+                    When(mangilik_el_certificate__isnull=False, then=Value(True)),
+                    default=Value(False),
+                    output_field=BooleanField()
+                ),
+                olympiad=Case(
+                    When(student__course="1", olympiad_winner_certificate__isnull=False, then=Value(1)),
+                    default=Value(0),
+                    output_field=IntegerField()
+                ),
+                ent_result_value=Case(
+                    When(student__course="1", then=F('ent_result')),
+                    default=Value(0),
+                    output_field=IntegerField()
+                ),
+                gpa_value=Case(
+                    When(student__course__gt="1", then=F('gpa')),
+                    default=Value(0),
+                    output_field=IntegerField()
+                )
+            ).order_by(
+                '-orphan',
+                '-social',
+                '-mangilik',
+                '-olympiad',
+                '-ent_result_value',
+                '-gpa_value',
+                'id'
             )
 
         return queryset
