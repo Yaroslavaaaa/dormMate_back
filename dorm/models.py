@@ -128,6 +128,14 @@ class Dorm(models.Model):
         return self.name
 
 
+class DormImage(models.Model):
+    dorm = models.ForeignKey(Dorm, related_name="images", on_delete=models.CASCADE)
+    image = models.ImageField(upload_to="dorm_images/", verbose_name="Фото")
+
+    def __str__(self):
+        return f"Фото для {self.dorm.name}"
+
+
 
 class TestQuestion(models.Model):
     QUESTION_TYPE_CHOICES = [

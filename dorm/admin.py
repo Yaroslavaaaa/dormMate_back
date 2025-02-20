@@ -10,7 +10,15 @@ from .models import *
 admin.site.register(Student)
 admin.site.register(Admin)
 admin.site.register(User)
-admin.site.register(Dorm)
+class DormImageInline(admin.TabularInline):
+    model = DormImage
+    extra = 1 
+
+@admin.register(Dorm)
+class DormAdmin(admin.ModelAdmin):
+    inlines = [DormImageInline]
+
+admin.site.register(DormImage)
 admin.site.register(Application)
 admin.site.register(Region)
 admin.site.register(TestQuestion)

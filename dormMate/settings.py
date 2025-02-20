@@ -195,7 +195,7 @@ AUTHENTICATION_BACKENDS = [
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
-]
+] + [f"http://localhost:{port}" for port in range(1024, 65535)]
 
 
 

@@ -8,10 +8,17 @@ class StudentSerializer(serializers.ModelSerializer):
         model = Student
         fields = '__all__'
 
+class DormImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DormImage
+        fields = ["id", "image"]
+
 class DormSerializer(serializers.ModelSerializer):
+    images = DormImageSerializer(many=True, read_only=True)
+
     class Meta:
         model = Dorm
-        fields = '__all__'
+        fields = "__all__"
 
 class TestQuestionSerializer(serializers.ModelSerializer):
     class Meta:
