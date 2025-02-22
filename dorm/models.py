@@ -169,7 +169,8 @@ class Application(models.Model):
     student = models.OneToOneField(Student, on_delete=models.CASCADE, verbose_name="Студент", related_name="application")
     approval = models.BooleanField(default=False, verbose_name="Одобрение")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending', verbose_name="Статус")
-    dormitory_choice = models.ForeignKey(Dorm, on_delete=models.SET_NULL, null=True, default=None, verbose_name="Выбор общежития")
+    # dormitory_choice = models.ForeignKey(Dorm, on_delete=models.SET_NULL, null=True, default=None, verbose_name="Выбор общежития")
+    dormitory_cost = models.PositiveIntegerField(verbose_name="Выбранная стоимость проживания")
     test_answers = models.JSONField(default=dict, verbose_name="Ответы теста")
     test_result = models.CharField(max_length=1, null=True, blank=True, verbose_name="Результат теста")
     payment_screenshot = models.FileField(upload_to='payments/', null=True, blank=True, verbose_name="Скрин оплаты")
@@ -191,6 +192,8 @@ class Application(models.Model):
                                                 verbose_name="Справка об обучении по программе 'Мәнгілік ел жастраы - индустрияға!'(Серпіт ө 2050)")
     olympiad_winner_certificate = models.FileField(upload_to='priority/olympiad_winner/', null=True, blank=True,
                                                     verbose_name="Сертификаты о победах в олимпиадах")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Время создания")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Время последнего обновления")
 
     def __str__(self):
         return f"Заявка от {self.student}"

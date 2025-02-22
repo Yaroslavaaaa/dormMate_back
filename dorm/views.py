@@ -31,7 +31,7 @@ class StudentViewSet(generics.ListAPIView):
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
 
-class DormViewSet(generics.ListAPIView):
+class DormView(generics.ListAPIView):
     queryset = Dorm.objects.all()
     serializer_class = DormSerializer
 
@@ -207,27 +207,35 @@ class IsStudent(IsAuthenticated):
         is_authenticated = super().has_permission(request, view)
         return is_authenticated and hasattr(request.user, 'student')
 
+
+class DormCostListView(APIView):
+    def get(self, request):
+        costs = Dorm.objects.values_list('cost', flat=True).distinct()
+        return Response(sorted(costs), status=status.HTTP_200_OK)
+
+
+
 class CreateApplicationView(APIView):
     permission_classes = [IsStudent]
+
     def post(self, request):
         student_id = request.user.student.id
-        dormitory_choice_id = request.data.get('dormitory_choice')
+        dormitory_cost = request.data.get('dormitory_cost')  # 💡 Теперь получаем стоимость
 
         if not student_id:
             return Response({"error": "Поле 'student' обязательно"}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not dormitory_choice_id:
-            return Response({"error": "Поле 'dormitory_choice' обязательно"}, status=status.HTTP_400_BAD_REQUEST)
+        if not dormitory_cost:
+            return Response({"error": "Поле 'dormitory_cost' обязательно"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Проверяем, существует ли общежитие с такой стоимостью
+        if not Dorm.objects.filter(cost=dormitory_cost).exists():
+            return Response({"error": "Общежитий с выбранной стоимостью не найдено"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             student = Student.objects.get(pk=student_id)
         except Student.DoesNotExist:
             return Response({"error": "Студент с таким ID не найден"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            dormitory_choice = Dorm.objects.get(pk=dormitory_choice_id)
-        except Dorm.DoesNotExist:
-            return Response({"error": "Общежитие с таким ID не найдено"}, status=status.HTTP_400_BAD_REQUEST)
 
         file_fields = [
             'priority',
@@ -243,16 +251,15 @@ class CreateApplicationView(APIView):
 
         for field in file_fields:
             file = request.FILES.get(field)
-            if file:
-                if file.content_type != 'application/pdf':
-                    return Response(
-                        {"error": f"Поле '{field}' принимает только файлы формата PDF."},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+            if file and file.content_type != 'application/pdf':
+                return Response(
+                    {"error": f"Поле '{field}' принимает только файлы формата PDF."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
         serializer = ApplicationSerializer(data=request.data)
         if serializer.is_valid():
-            application = serializer.save(student=student, dormitory_choice=dormitory_choice)
+            application = serializer.save(student=student, dormitory_cost=dormitory_cost)
             for field in file_fields:
                 file = request.FILES.get(field)
                 if file:
@@ -262,6 +269,7 @@ class CreateApplicationView(APIView):
             return Response({"message": "Заявка создана", "application_id": application.id},
                             status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class TestView(APIView):
     permission_classes = [IsStudent]
