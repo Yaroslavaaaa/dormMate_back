@@ -45,4 +45,6 @@ urlpatterns = [
     path('api/v1/applications/<int:pk>/payment-screenshot/', PaymentScreenshotView.as_view(), name='payment_screenshot'),
     path('api/v1/', include(router.urls)),
     path('api/v1/applications/', ApplicationListView.as_view(), name='application-list'),
+    path('api/v1/regions/', RegionListView.as_view(), name='region-list'),
+
 ]
