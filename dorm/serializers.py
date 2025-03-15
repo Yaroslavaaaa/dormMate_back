@@ -8,6 +8,12 @@ class StudentSerializer(serializers.ModelSerializer):
         model = Student
         fields = '__all__'
 
+
+class RegionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Region
+        fields = '__all__'
+
 class DormImageSerializer(serializers.ModelSerializer):
     class Meta:
         model = DormImage

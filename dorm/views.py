@@ -31,6 +31,11 @@ class StudentViewSet(generics.ListAPIView):
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
 
+
+class RegionListView(generics.ListAPIView):
+    queryset = Region.objects.all()
+    serializer_class = RegionSerializer
+
 class DormView(generics.ListAPIView):
     queryset = Dorm.objects.all()
     serializer_class = DormSerializer
