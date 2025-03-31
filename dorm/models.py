@@ -201,14 +201,41 @@ class Application(models.Model):
 
 
 
+class Chat(models.Model):
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='chats')
+    status = models.CharField(max_length=30, default='waiting_for_admin')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Chat {self.id} - {self.student}"
+
+class Message(models.Model):
+    chat = models.ForeignKey(Chat, on_delete=models.CASCADE, related_name='messages')
+    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_messages')
+    receiver = models.ForeignKey(User, on_delete=models.CASCADE, related_name='received_messages', null=True, blank=True)
+    content = models.TextField()
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.sender} -> {self.receiver}: {self.content}"
+
+class Notification(models.Model):
+    # Если уведомления создаются для пользователя (админа или студента)
+    recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_read = models.BooleanField(default=False)
+
+    def __str__(self):
+        return f"Notification for {self.recipient} at {self.created_at}"
+
 class QuestionAnswer(models.Model):
-    question = models.CharField(max_length=255)
+    question = models.TextField(unique=True)
     answer = models.TextField()
 
     def __str__(self):
-        return self.question
-
-
+        return f"Q: {self.question} A: {self.answer}"
 
 
 class StudentInDorm(models.Model):

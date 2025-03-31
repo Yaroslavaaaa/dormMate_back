@@ -26,7 +26,7 @@ SECRET_KEY = 'django-insecure-c4!s9(3y^h)8_thtf)o=wq15%6ol3h%m-!$yq+u^%$lhc+^r5c
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['127.0.0.1', '10.0.2.2', 'localhost']
 
 
 # Application definition
@@ -38,11 +38,12 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'dorm.apps.DormConfig',
+    'dorm.apps.UsersConfig',
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
+    'channels',
 ]
 
 AUTH_USER_MODEL = 'dorm.User'
@@ -197,6 +198,9 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
 ] + [f"http://localhost:{port}" for port in range(1024, 65535)]
 
+MIDDLEWARE.insert(0, 'corsheaders.middleware.CorsMiddleware')
+CORS_ALLOW_ALL_ORIGINS = True
+
 
 
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
@@ -205,3 +209,10 @@ EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'yaroslava.vuiko@narxoz.kz'
 EMAIL_HOST_PASSWORD = 'ya242004'
+
+
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer",
+    },
+}

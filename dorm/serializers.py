@@ -89,16 +89,55 @@ class CustomTokenObtainSerializer(serializers.Serializer):
         else:
             raise serializers.ValidationError('Must include "s" or "phone_number" and "password"')
 
-class QuestionAnswerSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = QuestionAnswer
-        fields = ['id', 'question', 'answer']
-
-class QuestionOnlySerializer(serializers.ModelSerializer):
-    class Meta:
-        model = QuestionAnswer
-        fields = ['id', 'question']
 
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(required=True)
     new_password = serializers.CharField(required=True)
+
+
+class MessageSerializer(serializers.ModelSerializer):
+    sender_type = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Message
+        fields = ['id', 'content', 'timestamp', 'sender_type']
+
+    def get_sender_type(self, obj):
+        # Проверка, кто отправитель: студент или админ
+        if hasattr(obj.sender, 'student'):
+            return 'student'
+        elif hasattr(obj.sender, 'admin') or obj.sender.is_staff or obj.sender.is_superuser:
+            return 'admin'
+        return 'unknown'
+class ChatSerializer(serializers.ModelSerializer):
+    student = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Chat
+        fields = ('id', 'student', 'status', 'is_active', 'created_at')
+
+    def get_student(self, obj):
+        return {
+            'id': obj.student.id,
+            's': obj.student.s,
+            'first_name': obj.student.first_name,
+            'last_name': obj.student.last_name,
+        }
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ['id', 'message', 'created_at', 'is_read']
+
+
+class QuestionAnswerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = QuestionAnswer
+        fields = '__all__'
+
+
+class QuestionAnswerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = QuestionAnswer
+        fields = '__all__'
