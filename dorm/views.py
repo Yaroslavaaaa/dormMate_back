@@ -1,5 +1,7 @@
-from rest_framework import viewsets, status, generics, filters
-from rest_framework.permissions import IsAuthenticated
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
+from django.core.exceptions import ObjectDoesNotExist
+from rest_framework import viewsets, status, generics, filters, permissions, request
 from rest_framework.views import APIView
 from rest_framework.response import Response
 import pandas as pd
@@ -12,7 +14,7 @@ from django.db import transaction
 from collections import defaultdict
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.exceptions import NotFound
+from rest_framework.exceptions import NotFound, PermissionDenied
 from django.contrib.auth import authenticate
 from django.http import HttpResponse, Http404
 from io import BytesIO
@@ -25,6 +27,8 @@ from django.conf import settings
 from rest_framework.generics import ListAPIView
 from django.db.models import F, Case, When, Value, IntegerField, BooleanField
 from rest_framework.exceptions import ValidationError
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission
 
 
 class StudentViewSet(generics.ListAPIView):
@@ -53,6 +57,19 @@ class IsAdmin(IsAuthenticated):
     def has_permission(self, request, view):
         is_authenticated = super().has_permission(request, view)
         return is_authenticated and (hasattr(request.user, 'admin') or request.user.is_superuser)
+
+
+class IsStudentOrAdmin(IsAuthenticated):
+    def has_permission(self, request, view):
+        is_authenticated = super().has_permission(request, view)
+        if not is_authenticated:
+            return False
+
+        is_student = hasattr(request.user, 'student')
+        is_admin = request.user.is_staff or request.user.is_superuser
+
+        return is_student or is_admin
+
 
 class StudentDetailView(RetrieveUpdateAPIView):
     serializer_class = StudentSerializer
@@ -369,33 +386,209 @@ class UploadPaymentScreenshotView(APIView):
 
         return Response({"message": "Скрин оплаты успешно прикреплен, заявка принята. Ожидайте ордер."}, status=status.HTTP_200_OK)
 
-class QuestionViewSet(generics.ListCreateAPIView):
-    queryset = QuestionAnswer.objects.all()
-    serializer_class = QuestionAnswerSerializer
 
-    def perform_create(self, serializer):
-        serializer.save()
+# для получения уведомлений для администратора
+class AdminNotificationListView(APIView):
+    permission_classes = [IsAdmin]  # или свой кастомный пермишн
 
-class AnswerDetailView(generics.RetrieveAPIView):
-    queryset = QuestionAnswer.objects.all()
-    serializer_class = QuestionAnswerSerializer
+    def get(self, request):
+        # Предполагаем, что recipient=текущий пользователь-админ
+        notifications = Notification.objects.filter(recipient=request.user, is_read=False)
+        # или, если хотите все: .filter(recipient=request.user)
 
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        return Response({"question": instance.question, "answer": instance.answer})
+        # Можно добавить пагинацию, но для примера вернем целиком
+        data = [{
+            "id": n.id,
+            "message": n.message,
+            "created_at": n.created_at.isoformat()
+        } for n in notifications]
+        return Response(data, status=status.HTTP_200_OK)
 
-class QuestionAnswerViewSet(generics.ListAPIView):
-    queryset = QuestionAnswer.objects.all()
-    filter_backends = [filters.SearchFilter]
-    search_fields = ['question']
+    def post(self, request):
+        # Отметить уведомления как прочитанные
+        ids = request.data.get('notification_ids', [])
+        Notification.objects.filter(pk__in=ids, recipient=request.user).update(is_read=True)
+        return Response({"detail": "Отмечены прочитанными"}, status=status.HTTP_200_OK)
 
-    def get_serializer_class(self):
-        if 'search' in self.request.query_params:
-            return QuestionAnswerSerializer
-        return QuestionOnlySerializer
+class NotificationListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # Возвращаем только уведомления для этого пользователя,
+        # которые не прочитаны
+        notifications = Notification.objects.filter(recipient=request.user, is_read=False)
+        serializer = NotificationSerializer(notifications, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        # Помечаем уведомления как прочитанные
+        notification_ids = request.data.get('notification_ids', [])
+        Notification.objects.filter(pk__in=notification_ids, recipient=request.user).update(is_read=True)
+        return Response({"detail": "Уведомления помечены как прочитанные"}, status=status.HTTP_200_OK)
 
 
+# Вью для пометки уведомления как прочитанного
+class MarkNotificationAsReadView(generics.UpdateAPIView):
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAdmin]
 
+    def update(self, request, *args, **kwargs):
+        notification = self.get_object()
+        notification.is_read = True
+        notification.save()
+        return Response({"status": "Уведомление отмечено как прочитанное"}, status=status.HTTP_200_OK)
+
+
+# --- Вопросы ---
+class QuestionView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        """Поиск в модели QuestionAnswer (FAQ). Если есть вопрос — возвращаем список ответов,
+           иначе пустой список."""
+        search_query = request.query_params.get('search', '')
+        if search_query:
+            answers = QuestionAnswer.objects.filter(question__icontains=search_query)
+            if answers.exists():
+                data = [{"question": ans.question, "answer": ans.answer} for ans in answers]
+                return Response(data, status=status.HTTP_200_OK)
+            return Response([], status=status.HTTP_200_OK)
+        return Response([], status=status.HTTP_400_BAD_REQUEST)
+
+    def post(self, request):
+        """Если вопрос есть в базе, сразу возвращаем answer.
+           Иначе создаём (или получаем) активный чат и отправляем вопрос админу."""
+        question = request.data.get('text')
+        student = request.user
+
+        if not question:
+            return Response({"error": "Вопрос не может быть пустым"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            qa = QuestionAnswer.objects.get(question__icontains=question)
+            return Response({"answer": qa.answer}, status=status.HTTP_200_OK)
+        except ObjectDoesNotExist:
+            chat, created = Chat.objects.get_or_create(
+                student=student,
+                is_active=True,
+                defaults={'status': 'waiting_for_admin'}
+            )
+            Message.objects.create(chat=chat, sender=student, content=question)
+            # тут можно создать Notification для админа, отправить через channels
+            return Response({"message": "Вопрос отправлен администратору"}, status=status.HTTP_201_CREATED)# --- Чаты ---
+
+
+class CreateChatView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        """Ищем активный чат для данного студента. Если нет — создаём новый."""
+        student = request.user
+        active_chat = Chat.objects.filter(student=student, is_active=True).first()
+        if active_chat:
+            return Response({"id": active_chat.id}, status=status.HTTP_200_OK)
+
+        new_chat = Chat.objects.create(student=student, is_active=True, status='waiting_for_admin')
+        return Response({"id": new_chat.id}, status=status.HTTP_201_CREATED)
+
+
+class StudentChatListView(generics.ListAPIView):
+    serializer_class = ChatSerializer
+    permission_classes = [IsStudent]
+
+    def get_queryset(self):
+        # Студент видит только свои активные чаты
+        return Chat.objects.filter(student=self.request.user, is_active=True)
+
+class AdminChatListView(generics.ListAPIView):
+    serializer_class = ChatSerializer
+    permission_classes = [IsAdmin]
+
+    def get_queryset(self):
+        # Администратор видит все активные чаты студентов
+        return Chat.objects.filter(is_active=True).order_by('-created_at')
+
+# --- Сообщения ---
+
+class MessageListView(APIView):
+    permission_classes = [IsStudentOrAdmin]
+
+    def get(self, request, chat_id):
+        chat = get_object_or_404(Chat, id=chat_id, is_active=True)
+
+        if request.user.is_staff or request.user.is_superuser:
+            pass
+        else:
+            if hasattr(request.user, 'student') and chat.student.id != request.user.id:
+                return Response({"error": "Нет доступа к этому чату."}, status=status.HTTP_403_FORBIDDEN)
+
+        messages = Message.objects.filter(chat=chat).order_by('timestamp')
+        serializer = MessageSerializer(messages, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ChatListView(APIView):
+    permission_classes = [IsStudentOrAdmin]
+
+    def get(self, request):
+        # Возвращаем только активные чаты;
+        # т.к. связь один к одному – каждый чат уникален для студента
+        chats = Chat.objects.filter(is_active=True)
+        serializer = ChatSerializer(chats, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+class SendMessageView(APIView):
+    permission_classes = [IsStudentOrAdmin]
+
+    def post(self, request, chat_id):
+        chat = get_object_or_404(Chat, id=chat_id, is_active=True)
+        text = request.data.get('text')
+        if not text:
+            return Response({"error": "Сообщение не может быть пустым"}, status=status.HTTP_400_BAD_REQUEST)
+
+        receiver = chat.student if request.user.is_staff else User.objects.filter(is_staff=True).first()
+
+        Message.objects.create(chat=chat, sender=request.user, receiver=receiver, content=text)
+
+        Notification.objects.create(recipient=receiver, message=f"Новое сообщение: {text[:50]}")
+
+        return Response({"status": "Сообщение отправлено"}, status=status.HTTP_201_CREATED)
+
+class EndChatView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, chat_id):
+        """Помечаем чат как неактивный, если пользователь - владелец или админ."""
+        chat = get_object_or_404(Chat, id=chat_id, is_active=True)
+        if request.user.is_staff or chat.student == request.user:
+            chat.is_active = False
+            chat.status = 'closed'
+            chat.save()
+            return Response({"status": "Чат завершён"}, status=status.HTTP_200_OK)
+        return Response({"error": "Нет доступа к этому чату."}, status=status.HTTP_403_FORBIDDEN)
+# --- Запрос оператора ---
+
+class RequestAdminView(APIView):
+    permission_classes = [IsStudent]  # Только студент может запросить оператора
+    def post(self, request):
+        chat_id = request.data.get('chat_id')
+        chat = get_object_or_404(Chat, id=chat_id, is_active=True, student=request.user)
+        admin = get_object_or_404(User, is_staff=True)
+        Notification.objects.create(
+            recipient=admin,
+            message=f"Студент {(request.user.username if hasattr(request.user, 'username') else request.user.s)[:50]} просит подключить оператора к чату #{chat.id}"
+        )
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            "admin_notifications",
+            {
+                "type": "new_chat",
+                "chat_id": chat.id,
+                "student": request.user.username if hasattr(request.user, 'username') else request.user.s,
+                "question": "Запрос оператора"
+            }
+        )
+        return Response({"status": "Оператор уведомлен"}, status=status.HTTP_200_OK)
 
 
 class DistributeStudentsAPIView(APIView):

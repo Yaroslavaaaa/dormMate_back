@@ -87,3 +87,23 @@ class ApplicationAdmin(admin.ModelAdmin):
         print(f"Заявка {obj.id} удалена администратором {request.user}")
         super().delete_model(request, obj)
 
+
+@admin.register(Message)
+class MessageAdmin(admin.ModelAdmin):
+    list_display = ('id', 'sender', 'receiver', 'content', 'timestamp')  # ✅ Поля соответствуют модели
+    list_filter = ('timestamp',)  # ✅ Поле существует в модели
+    search_fields = ('content',)
+
+# ✅ Регистрация модели Chat
+@admin.register(Chat)
+class ChatAdmin(admin.ModelAdmin):
+    list_display = ['id', 'student', 'status', 'created_at']  # убраны admin, updated_at
+    list_filter = ['status', 'created_at']  # убран updated_at
+    search_fields = ['student__username', 'status']
+# ✅ Регистрация модели Notification
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = ('id', 'recipient', 'message', 'created_at', 'is_read')
+    list_filter = ('created_at', 'is_read')
+
+
