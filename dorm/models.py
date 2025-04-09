@@ -157,6 +157,62 @@ class TestQuestion(models.Model):
 
 
 
+class Keyword(models.Model):
+    keyword = models.CharField(max_length=100, verbose_name="Ключевое слово")
+
+    def __str__(self):
+        return self.keyword
+
+class EvidenceType(models.Model):
+    DATA_TYPE_CHOICES = [
+        ('file', 'Файл'),
+        ('numeric', 'Числовое значение'),
+    ]
+    name = models.CharField(max_length=100, verbose_name="Название")
+    code = models.CharField(max_length=50, unique=True, verbose_name="Код")
+    priority = models.IntegerField(
+        default=0,
+        help_text="Чем больше число, тем выше приоритет",
+        verbose_name="Приоритет"
+    )
+    data_type = models.CharField(max_length=20, choices=DATA_TYPE_CHOICES, verbose_name="Тип данных")
+    auto_fill_field = models.CharField(
+        max_length=50, blank=True, null=True,
+        help_text="Название поля в Application или Student, откуда брать значение при отсутствии загруженного доказательства",
+        verbose_name="Поле автозаполнения"
+    )
+    # ManyToManyField через промежуточную модель EvidenceKeyword
+    keywords = models.ManyToManyField('Keyword', through='EvidenceKeyword', blank=True, verbose_name="Ключевые слова")
+
+    def __str__(self):
+        return self.name
+
+
+
+
+
+
+
+
+
+class EvidenceKeyword(models.Model):
+    evidence_type = models.ForeignKey(
+        EvidenceType,
+        on_delete=models.CASCADE,
+        related_name='evidence_keywords',
+        related_query_name='evidence_keyword'  # Изменённое обратное имя для запросов
+    )
+    keyword = models.ForeignKey(
+        Keyword,
+        on_delete=models.CASCADE,
+        related_name='evidence_keywords'
+    )
+
+    def __str__(self):
+        return f"{self.evidence_type.name} - {self.keyword.keyword}"
+
+
+
 class Application(models.Model):
     STATUS_CHOICES = [
         ('pending', 'На рассмотрении'),
@@ -166,37 +222,56 @@ class Application(models.Model):
         ('awaiting_order', 'Ожидание ордера'),
         ('order', 'Ордер получен'),
     ]
-    student = models.OneToOneField(Student, on_delete=models.CASCADE, verbose_name="Студент", related_name="application")
+    student = models.OneToOneField(
+        Student, on_delete=models.CASCADE,
+        verbose_name="Студент", related_name="application"
+    )
     approval = models.BooleanField(default=False, verbose_name="Одобрение")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending', verbose_name="Статус")
-    # dormitory_choice = models.ForeignKey(Dorm, on_delete=models.SET_NULL, null=True, default=None, verbose_name="Выбор общежития")
     dormitory_cost = models.PositiveIntegerField(verbose_name="Выбранная стоимость проживания")
     test_answers = models.JSONField(default=dict, verbose_name="Ответы теста")
     test_result = models.CharField(max_length=1, null=True, blank=True, verbose_name="Результат теста")
     payment_screenshot = models.FileField(upload_to='payments/', null=True, blank=True, verbose_name="Скрин оплаты")
+    is_full_payment = models.BooleanField(null=True, blank=True, verbose_name="Полная оплата")
+
+    # Поля для ЕНТ и GPA остаются в модели
     ent_result = models.PositiveIntegerField(null=True, blank=True, verbose_name="Результат ЕНТ")
     gpa = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True, verbose_name="GPA")
-    orphan_certificate = models.FileField(upload_to='priority/orphan/', null=True, blank=True,
-                                           verbose_name="Справка о сиротстве")
-    disability_1_2_certificate = models.FileField(upload_to='priority/disability_1_2/', null=True, blank=True,
-                                                   verbose_name="Справка об инвалидности 1-2 групп")
-    disability_3_certificate = models.FileField(upload_to='priority/disability_3/', null=True, blank=True,
-                                                 verbose_name="Справка об инвалидности 3 группы")
-    parents_disability_certificate = models.FileField(upload_to='priority/parents_disability/', null=True, blank=True,
-                                                       verbose_name="Справка об инвалидности родителей")
-    loss_of_breadwinner_certificate = models.FileField(upload_to='priority/loss_of_breadwinner/', null=True, blank=True,
-                                                        verbose_name="Справка о потере кормильца")
-    social_aid_certificate = models.FileField(upload_to='priority/social_aid/', null=True, blank=True,
-                                               verbose_name="Справка о получении государственной социальной помощи")
-    mangilik_el_certificate = models.FileField(upload_to='priority/mangilik_el/', null=True, blank=True,
-                                                verbose_name="Справка об обучении по программе 'Мәнгілік ел жастраы - индустрияға!'(Серпіт ө 2050)")
-    olympiad_winner_certificate = models.FileField(upload_to='priority/olympiad_winner/', null=True, blank=True,
-                                                    verbose_name="Сертификаты о победах в олимпиадах")
+
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Время создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Время последнего обновления")
 
+
     def __str__(self):
         return f"Заявка от {self.student}"
+
+
+
+
+
+class ApplicationEvidence(models.Model):
+    application = models.ForeignKey(
+        Application, on_delete=models.CASCADE, related_name='evidences',
+        verbose_name="Заявка"
+    )
+    evidence_type = models.ForeignKey(
+        EvidenceType, on_delete=models.CASCADE, verbose_name="Тип доказательства"
+    )
+    file = models.FileField(upload_to='evidences/', null=True, blank=True, verbose_name="Файл доказательства")
+    numeric_value = models.DecimalField(
+        max_digits=6, decimal_places=2, null=True, blank=True,
+        verbose_name="Числовое значение"
+    )
+    approved = models.BooleanField(
+        null=True, blank=True,
+        verbose_name="Одобрено",
+        help_text="Если True – справка одобрена, если False – отклонена, если None – не проверена"
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Время создания")
+
+    def __str__(self):
+        return f"{self.application.id} - {self.evidence_type.name}"
+
 
 
 

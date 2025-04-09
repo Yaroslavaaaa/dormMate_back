@@ -7,6 +7,25 @@ from .models import *
 # Register your models here.
 
 
+class EvidenceKeywordInline(admin.TabularInline):
+    model = EvidenceKeyword
+    extra = 1  # Количество дополнительных пустых форм
+
+@admin.register(EvidenceType)
+class EvidenceTypeAdmin(admin.ModelAdmin):
+    list_display = ('name', 'code', 'priority', 'data_type')
+    search_fields = ('name', 'code')
+    inlines = [EvidenceKeywordInline]
+
+@admin.register(Keyword)
+class KeywordAdmin(admin.ModelAdmin):
+    list_display = ('keyword',)
+    search_fields = ('keyword',)
+
+@admin.register(ApplicationEvidence)
+class ApplicationEvidenceAdmin(admin.ModelAdmin):
+    list_display = ('application', 'evidence_type', 'created_at')
+    list_filter = ('evidence_type',)
 admin.site.register(Student)
 admin.site.register(Admin)
 admin.site.register(User)

@@ -3,6 +3,9 @@ from .models import *
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 
+from .utils import calculate_application_score
+
+
 class StudentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Student
@@ -31,28 +34,7 @@ class TestQuestionSerializer(serializers.ModelSerializer):
         model = TestQuestion
         fields = "__all__"
 
-# class ApplicationSerializer(serializers.ModelSerializer):
-#     student = StudentSerializer(read_only=True)
-#
-#     class Meta:
-#         model = Application
-#         fields = ['student', 'dormitory_choice']
-#         # fields = '__all__'
 
-
-class ApplicationSerializer(serializers.ModelSerializer):
-    student = StudentSerializer(read_only=True)
-    # dormitory_name = serializers.CharField(source='dormitory.name', read_only=True)
-
-    class Meta:
-        model = Application
-        fields = '__all__'  # Все поля модели Application
-        # extra_fields = ['dormitory_name']  # Добавляемое поле
-
-    # def to_representation(self, instance):
-    #     representation = super().to_representation(instance)
-    #     representation['dormitory_name'] = instance.dormitory_choice.name if instance.dormitory_choice else None
-    #     return representation
 
 
 class ExcelUploadSerializer(serializers.Serializer):
@@ -141,3 +123,79 @@ class QuestionAnswerSerializer(serializers.ModelSerializer):
     class Meta:
         model = QuestionAnswer
         fields = '__all__'
+
+
+
+class EvidenceTypeSerializer(serializers.ModelSerializer):
+    # Если нужно, можно добавить alias для отображения имени
+    label = serializers.CharField(source='name', read_only=True)
+
+    class Meta:
+        model = EvidenceType
+        fields = ('id', 'code', 'name', 'label', 'priority', 'data_type')
+
+
+class ApplicationEvidenceSerializer(serializers.ModelSerializer):
+    evidence_type = serializers.SlugRelatedField(
+        slug_field='code',
+        read_only=True
+    )
+
+    class Meta:
+        model = ApplicationEvidence
+        fields = ('id', 'evidence_type', 'file', 'numeric_value', 'approved', 'created_at')
+
+
+
+
+class ApplicationSerializer(serializers.ModelSerializer):
+    student = StudentSerializer(read_only=True)
+    evidences = ApplicationEvidenceSerializer(many=True, required=False)
+    score = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = Application
+        fields = (
+            'id',
+            'student',
+            'approval',
+            'status',
+            'dormitory_cost',
+            'test_answers',
+            'test_result',
+            'payment_screenshot',
+            'ent_result',
+            'gpa',
+            'evidences',
+            'score',
+            'created_at',
+            'updated_at',
+        )
+
+    def get_score(self, obj):
+        try:
+            return calculate_application_score(obj)
+        except Exception as e:
+            # Логируем ошибку, чтобы понять, что именно происходит
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error("Error calculating score for application %s: %s", obj.id, e)
+            return None
+
+    def create(self, validated_data):
+        evidences_data = validated_data.pop('evidences', [])
+        application = Application.objects.create(**validated_data)
+        for evidence_data in evidences_data:
+            ApplicationEvidence.objects.create(application=application, **evidence_data)
+        return application
+
+    def update(self, instance, validated_data):
+        evidences_data = validated_data.pop('evidences', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        if evidences_data is not None:
+            instance.evidences.all().delete()
+            for evidence_data in evidences_data:
+                ApplicationEvidence.objects.create(application=instance, **evidence_data)
+        return instance

@@ -40,7 +40,9 @@ urlpatterns = [
     path('api/v1/applications/<int:application_id>/change-dormitory/', ChangeStudentDormitoryAPIView.as_view(),name='change_dormitory'),
     path('api/v1/export-students/', ExportStudentInDormExcelView.as_view(), name='export_students_excel'),
     path('api/v1/applications/<int:pk>/', ApplicationDetailView.as_view(), name='application-detail'),
-    path('api/v1/applications/<int:pk>/files/<str:field_name>/', PDFView.as_view(), name='pdf-view'),
+    # path('api/v1/applications/<int:pk>/files/<str:field_name>/', PDFView.as_view(), name='pdf-view'),
+    path('api/v1/applications/<int:pk>/document/<slug:evidence_code>/', PDFView.as_view(), name='application-pdf'),
+    path('api/v1/evidences/<int:pk>/update-status/', UpdateEvidenceStatusAPIView.as_view(), name='update-evidence-status'),
     path('api/v1/applications/<int:pk>/payment-screenshot/', PaymentScreenshotView.as_view(), name='payment_screenshot'),
     path('api/v1/', include(router.urls)),
     path('api/v1/applications/', ApplicationListView.as_view(), name='application-list'),
@@ -61,6 +63,10 @@ urlpatterns = [
     path('api/v1/chats/<int:chat_id>/send/', SendMessageView.as_view(), name='send-message'),
     path('api/v1/chats/<int:chat_id>/end/', EndChatView.as_view(), name='end-chat'),
     path('api/v1/notifications/admin/', AdminNotificationListView.as_view(), name='admin-notifications'),
+    path('api/v1/evidence-types/', EvidenceTypeListAPIView.as_view(), name='evidence-types-list'),
+    path('api/v1/reminder/partial-payment/', SendPartialPaymentReminderAPIView.as_view(), name='partial_payment_reminder'),
+    path('api/v1/generate-selection/', GenerateSelectionAPIView.as_view(), name='generate-selection'),
+    path('api/v1/notify-approved/', NotifyApprovedStudentsAPIView.as_view(), name='notify-approved'),
 
 
 ]

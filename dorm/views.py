@@ -16,7 +16,7 @@ from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.exceptions import NotFound, PermissionDenied
 from django.contrib.auth import authenticate
-from django.http import HttpResponse, Http404
+from django.http import HttpResponse, Http404, JsonResponse
 from io import BytesIO
 import openpyxl
 from django.http import FileResponse
@@ -28,7 +28,14 @@ from rest_framework.generics import ListAPIView
 from django.db.models import F, Case, When, Value, IntegerField, BooleanField
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
+from django.db.models import Sum
+from django.db import transaction
+from collections import defaultdict
+
 from rest_framework.permissions import BasePermission
+import PyPDF2
+
+from .utils import *
 
 
 class StudentViewSet(generics.ListAPIView):
@@ -48,8 +55,9 @@ class TestQuestionViewSet(generics.ListAPIView):
     queryset = TestQuestion.objects.all()
     serializer_class = TestQuestionSerializer
 
+
 class ApplicationViewSet(generics.ListAPIView):
-    queryset = Application.objects.all()
+    queryset = Application.objects.all().prefetch_related('evidences')
     serializer_class = ApplicationSerializer
 
 
@@ -119,13 +127,19 @@ class ApplicationDetailView(RetrieveUpdateAPIView):
 
 
 class PDFView(View):
-    def get(self, request, pk, field_name):
-        application = get_object_or_404(Application, id=pk)
-        file = getattr(application, field_name, None)
-
-        if file and file.name.endswith('.pdf'):
-            return FileResponse(file.open('rb'), content_type='application/pdf')
-        return Response({'error': 'The requested file is not a PDF or does not exist.'}, status=400)
+    def get(self, request, pk, evidence_code):
+        """
+        Возвращает PDF-файл для заявки с id=pk и типом доказательства, равным evidence_code.
+        """
+        application_evidence = get_object_or_404(
+            ApplicationEvidence,
+            application__id=pk,
+            evidence_type__code=evidence_code
+        )
+        file_field = application_evidence.file
+        if file_field and file_field.name.lower().endswith('.pdf'):
+            return FileResponse(file_field.open('rb'), content_type='application/pdf')
+        return JsonResponse({'error': 'Запрошенный файл не является PDF или не существует.'}, status=400)
 
 
 
@@ -237,12 +251,28 @@ class DormCostListView(APIView):
 
 
 
+
+def extract_text_from_pdf(file_obj):
+    """
+    Извлекает текст из PDF-файла с помощью PyPDF2.
+    Если возникает ошибка при чтении, возвращается пустая строка.
+    """
+    text = ""
+    try:
+        reader = PyPDF2.PdfReader(file_obj)
+        for page in reader.pages:
+            page_text = page.extract_text() or ""
+            text += page_text
+    except Exception as e:
+        text = ""
+    return text
+
 class CreateApplicationView(APIView):
     permission_classes = [IsStudent]
 
     def post(self, request):
         student_id = request.user.student.id
-        dormitory_cost = request.data.get('dormitory_cost')  # 💡 Теперь получаем стоимость
+        dormitory_cost = request.data.get('dormitory_cost')
 
         if not student_id:
             return Response({"error": "Поле 'student' обязательно"}, status=status.HTTP_400_BAD_REQUEST)
@@ -250,7 +280,6 @@ class CreateApplicationView(APIView):
         if not dormitory_cost:
             return Response({"error": "Поле 'dormitory_cost' обязательно"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Проверяем, существует ли общежитие с такой стоимостью
         if not Dorm.objects.filter(cost=dormitory_cost).exists():
             return Response({"error": "Общежитий с выбранной стоимостью не найдено"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -259,38 +288,56 @@ class CreateApplicationView(APIView):
         except Student.DoesNotExist:
             return Response({"error": "Студент с таким ID не найден"}, status=status.HTTP_400_BAD_REQUEST)
 
-        file_fields = [
-            'priority',
-            'orphan_certificate',
-            'disability_1_2_certificate',
-            'disability_3_certificate',
-            'parents_disability_certificate',
-            'loss_of_breadwinner_certificate',
-            'social_aid_certificate',
-            'mangilik_el_certificate',
-            'olympiad_winner_certificate',
-        ]
-
-        for field in file_fields:
-            file = request.FILES.get(field)
+        evidences_files = request.FILES
+        # Проверка MIME-типа каждого файла
+        for key in evidences_files:
+            file = evidences_files.get(key)
             if file and file.content_type != 'application/pdf':
                 return Response(
-                    {"error": f"Поле '{field}' принимает только файлы формата PDF."},
+                    {"error": f"Файл в поле '{key}' должен быть формата PDF."},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
         serializer = ApplicationSerializer(data=request.data)
         if serializer.is_valid():
-            application = serializer.save(student=student, dormitory_cost=dormitory_cost)
-            for field in file_fields:
-                file = request.FILES.get(field)
-                if file:
-                    setattr(application, field, file)
-            application.save()
+            try:
+                with transaction.atomic():
+                    application = serializer.save(student=student, dormitory_cost=dormitory_cost)
+                    for key, file in request.FILES.items():
+                        try:
+                            evidence_type = EvidenceType.objects.get(code=key)
+                        except EvidenceType.DoesNotExist:
+                            continue  # Если evidence type не найден, пропускаем
 
-            return Response({"message": "Заявка создана", "application_id": application.id},
-                            status=status.HTTP_201_CREATED)
+                        # Извлекаем текст из PDF-файла
+                        extracted_text = extract_text_from_pdf(file)
+                        # Сброс указателя файла для корректного сохранения
+                        file.seek(0)
+                        keywords = evidence_type.keywords.all()
+                        # Если для типа справки заданы ключевые слова, проверяем их наличие в тексте
+                        if keywords and not any(
+                            keyword.keyword.lower() in extracted_text.lower() for keyword in keywords
+                        ):
+                            raise ValidationError(
+                                f"Загруженный файл для '{evidence_type.name}' не содержит необходимых ключевых слов."
+                            )
+
+                        ApplicationEvidence.objects.create(
+                            application=application,
+                            evidence_type=evidence_type,
+                            file=file
+                        )
+                return Response(
+                    {"message": "Заявка создана", "application_id": application.id},
+                    status=status.HTTP_201_CREATED
+                )
+            except ValidationError as e:
+                # Откат транзакции произойдет автоматически при выбросе исключения
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
 
 
 class TestView(APIView):
@@ -591,53 +638,119 @@ class RequestAdminView(APIView):
         return Response({"status": "Оператор уведомлен"}, status=status.HTTP_200_OK)
 
 
-class DistributeStudentsAPIView(APIView):
+
+
+class UpdateEvidenceStatusAPIView(APIView):
+    # Здесь можно добавить permission_classes для админа
+    def put(self, request, pk):
+        try:
+            evidence = ApplicationEvidence.objects.get(pk=pk)
+        except ApplicationEvidence.DoesNotExist:
+            return Response({"error": "Справка не найдена."}, status=status.HTTP_404_NOT_FOUND)
+        approved = request.data.get('approved')
+        if approved is None:
+            return Response({"error": "Поле 'approved' обязательно."}, status=status.HTTP_400_BAD_REQUEST)
+        evidence.approved = approved
+        evidence.save()
+        return Response({"message": "Статус справки обновлен."}, status=status.HTTP_200_OK)
+
+class EvidenceTypeListAPIView(ListAPIView):
+    queryset = EvidenceType.objects.all()
+    serializer_class = EvidenceTypeSerializer
+
+
+
+
+
+# class DistributeStudentsAPIView(APIView):
+#     permission_classes = [IsAdmin]
+#
+#     def post(self, request, *args, **kwargs):
+#         total_places = Dorm.objects.aggregate(total_places=models.Sum('total_places'))['total_places']
+#
+#         if not total_places or total_places <= 0:
+#             return Response({"detail": "Нет доступных мест в общежитиях."}, status=status.HTTP_400_BAD_REQUEST)
+#
+#         pending_applications = Application.objects.filter(
+#             approval=False, status="pending"
+#         ).select_related('student').prefetch_related('evidences')
+#
+#         # Сортируем заявки на основе вычисленного балла
+#         sorted_applications = sorted(
+#             pending_applications,
+#             key=lambda app: calculate_application_score(app),
+#             reverse=True
+#         )
+#
+#         selected_applications = sorted_applications[:total_places]
+#         rejected_applications = sorted_applications[total_places:]
+#
+#         approved_students = []
+#
+#         with transaction.atomic():
+#             for application in selected_applications:
+#                 application.approval = True
+#                 application.status = "awaiting_payment"
+#                 application.save()
+#                 approved_students.append({
+#                     "student_s": getattr(application.student, "s", "Нет S"),
+#                     "first_name": getattr(application.student, 'first_name', 'Нет имени'),
+#                     "last_name": getattr(application.student, 'last_name', 'Нет имени'),
+#                     "course": getattr(application.student, 'course', 'Не указан'),
+#                     "ent_result": application.ent_result,
+#                     "gpa": application.gpa,
+#                 })
+#
+#             for application in rejected_applications:
+#                 application.status = "rejected"
+#                 application.save()
+#
+#         return Response(
+#             {
+#                 "detail": f"{len(selected_applications)} студентов были одобрены для заселения.",
+#                 "approved_students": approved_students
+#             },
+#             status=status.HTTP_200_OK
+#         )
+
+
+
+# Первый эндпоинт: формирование списка для проверки администратором
+
+class GenerateSelectionAPIView(APIView):
     permission_classes = [IsAdmin]
 
     def post(self, request, *args, **kwargs):
         total_places = Dorm.objects.aggregate(total_places=models.Sum('total_places'))['total_places']
 
         if not total_places or total_places <= 0:
-            return Response({"detail": "Нет доступных мест в общежитиях."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": "Нет доступных мест в общежитиях."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        pending_applications = Application.objects.filter(approval=False, status="pending").select_related('student')
+        pending_applications = Application.objects.filter(
+            approval=False, status="pending"
+        ).select_related('student').prefetch_related('evidences')
 
-        print(f"Всего заявок: {len(pending_applications)}")
-
+        # Сортируем заявки на основе вычисленного балла
         sorted_applications = sorted(
             pending_applications,
-            key=lambda app: (
-                bool(app.orphan_certificate) or bool(app.disability_1_2_certificate),
-                bool(app.disability_3_certificate) or
-                bool(app.parents_disability_certificate) or
-                bool(app.loss_of_breadwinner_certificate) or
-                bool(app.social_aid_certificate),
-                bool(app.mangilik_el_certificate),
-                1 if app.student.course == "1" and app.olympiad_winner_certificate else 0,
-                1 if app.student.course == "1" else 0,
-                -(app.ent_result or 0) if app.student.course == "1" else 0,
-                0 if app.student.course == "1" else -(app.gpa or 0),
-                app.id
-            ),
-            reverse=True,
+            key=lambda app: calculate_application_score(app),
+            reverse=True
         )
 
         selected_applications = sorted_applications[:total_places]
         rejected_applications = sorted_applications[total_places:]
 
-        print(f"Одобренных: {len(selected_applications)}")
-        print(f"Отклоненных: {len(rejected_applications)}")
-
         approved_students = []
 
         with transaction.atomic():
+            # Отмечаем выбранные заявки как "approved" для дальнейшего подтверждения
             for application in selected_applications:
                 application.approval = True
-                application.status = "awaiting_payment"
+                application.status = "approved"  # статус для ручного контроля
                 application.save()
-
-                print(f"Одобрен: {application.student.first_name}, Курс: {application.student.course}")
-
                 approved_students.append({
                     "student_s": getattr(application.student, "s", "Нет S"),
                     "first_name": getattr(application.student, 'first_name', 'Нет имени'),
@@ -647,13 +760,14 @@ class DistributeStudentsAPIView(APIView):
                     "gpa": application.gpa,
                 })
 
+            # Отмечаем остальные заявки как отклонённые
             for application in rejected_applications:
                 application.status = "rejected"
                 application.save()
 
         return Response(
             {
-                "detail": f"{len(selected_applications)} студентов были одобрены для заселения.",
+                "detail": f"Сформирован список: {len(selected_applications)} заявок одобрено для проверки, {len(rejected_applications)} заявок отклонено.",
                 "approved_students": approved_students
             },
             status=status.HTTP_200_OK
@@ -664,22 +778,170 @@ class DistributeStudentsAPIView(APIView):
 
 
 
+
+
+
+# Второй эндпоинт: перевод одобренных заявок в статус "awaiting_payment" и уведомление студентов
+
+
+
+class NotifyApprovedStudentsAPIView(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request, *args, **kwargs):
+        # Получаем все одобренные заявки для уведомления
+        approved_applications = list(Application.objects.filter(
+            approval=True, status="approved"
+        ))
+
+        # Вычисляем вместимость общаг по стоимости: группируем Dorm по cost
+        dorm_capacities = Dorm.objects.values('cost').annotate(total_capacity=Sum('total_places'))
+        capacity_by_cost = {entry['cost']: entry['total_capacity'] for entry in dorm_capacities}
+
+        # Группируем заявки по dormitory_cost
+        apps_by_cost = defaultdict(list)
+        for app in approved_applications:
+            apps_by_cost[app.dormitory_cost].append(app)
+
+        # Сортируем стоимости по убыванию (например, [800000, 400000])
+        sorted_costs = sorted(capacity_by_cost.keys(), reverse=True)
+
+        transferred_app_ids = []
+
+        # Для каждой группы, начиная с самой высокой стоимости, пытаемся перевести избыток заявок в группу с более низкой стоимостью
+        for i in range(len(sorted_costs) - 1):
+            cost = sorted_costs[i]
+            next_cost = sorted_costs[i + 1]
+            current_apps = apps_by_cost[cost]
+            capacity = capacity_by_cost.get(cost, 0)
+            overflow = len(current_apps) - capacity
+
+            if overflow > 0:
+                # Определяем свободные места в группе со следующей (более низкой) стоимостью
+                next_capacity = capacity_by_cost.get(next_cost, 0)
+                current_next_count = len(apps_by_cost[next_cost])
+                available_lower = next_capacity - current_next_count
+
+                to_transfer_count = min(overflow, available_lower) if available_lower > 0 else 0
+
+                if to_transfer_count > 0:
+                    # Сортируем заявки в группе с данной стоимостью по возрастанию балла (наименьший балл – первый)
+                    current_apps_sorted = sorted(current_apps, key=lambda app: calculate_application_score(app))
+                    apps_to_transfer = current_apps_sorted[:to_transfer_count]
+
+                    for app in apps_to_transfer:
+                        # Переносим студента: меняем стоимость на следующую
+                        old_cost = app.dormitory_cost
+                        app.dormitory_cost = next_cost
+                        app.save()
+                        send_email_notification(
+                            app.student.email,
+                            f"Здравствуйте, {app.student.first_name}! К сожалению, вам не было предоставлено место за {old_cost}. Вместо этого предоставляем место за {next_cost}."
+                        )
+                        transferred_app_ids.append(app.id)
+                        # Обновляем группы заявок
+                        apps_by_cost[cost].remove(app)
+                        apps_by_cost[next_cost].append(app)
+
+        # После перераспределения устанавливаем статус "awaiting_payment" для всех заявок и отправляем уведомления
+        with transaction.atomic():
+            for app in approved_applications:
+                app.status = "awaiting_payment"
+                app.save()
+                if app.id not in transferred_app_ids:
+                    send_email_notification(
+                        app.student.email,
+                        f"Здравствуйте, {app.student.first_name}! Вам было выделено место в общежитии. Просим вас внести оплату за предоставленное место."
+                    )
+
+        count = len(approved_applications)
+        return Response(
+            {
+                "detail": f"Уведомление отправлено {count} одобренным студентам. {len(transferred_app_ids)} студентов были переведены в общагу с меньшей стоимостью."
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+
+
+
 class DistributeStudentsAPIView2(APIView):
     permission_classes = [IsAdmin]
 
     def post(self, request, *args, **kwargs):
-        dorms = Dorm.objects.all()
+        # Загружаем Excel‑файл, переданный администратором
+        excel_file = request.FILES.get('excel_file')
+        if not excel_file:
+            return Response(
+                {"detail": "Excel‑файл обязателен для проверки данных студентов."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        approved_applications = Application.objects.filter(
+        try:
+            df = pd.read_excel(excel_file)
+        except Exception as e:
+            return Response(
+                {"detail": f"Ошибка при чтении Excel‑файла: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Формируем словарь валидных студентов из Excel‑файла.
+        # Ключ – кортеж (first_name, last_name, middle_name, phone_number),
+        # значение – сумма из файла (sum)
+        valid_students = {}
+        for index, row in df.iterrows():
+            key = (
+                row['first_name'].strip() if isinstance(row['first_name'], str) else row['first_name'],
+                row['last_name'].strip() if isinstance(row['last_name'], str) else row['last_name'],
+                row['middle_name'].strip() if isinstance(row['middle_name'], str) else row['middle_name'],
+                str(row['phone_number']).strip()
+            )
+            valid_students[key] = row['sum']
+
+        print("Отладка: Содержимое словаря valid_students:")
+        for key, value in valid_students.items():
+            print(f"{key} : {value}")
+
+        # Получаем заявки, у которых одобрено и есть скрин оплаты
+        approved_applications_all = Application.objects.filter(
             approval=True,
             payment_screenshot__isnull=False
         ).exclude(payment_screenshot="")
 
+        approved_applications = []
+        for app in approved_applications_all:
+            student = app.student
+            key = (
+                student.first_name.strip() if student.first_name and isinstance(student.first_name, str) else student.first_name,
+                student.last_name.strip() if student.last_name and isinstance(student.last_name, str) else student.last_name,
+                student.middle_name.strip() if student.middle_name and isinstance(student.middle_name, str) else student.middle_name,
+                str(student.phone_number).strip()
+            )
+            if key in valid_students:
+                excel_sum = valid_students[key]
+                # Сравнение суммы из Excel с dormitory_cost из заявки
+                if excel_sum == app.dormitory_cost:
+                    app.is_full_payment = True
+                elif excel_sum == (app.dormitory_cost / 2):
+                    app.is_full_payment = False
+                else:
+                    app.is_full_payment = None  # Неопределено
+                app.save()
+                approved_applications.append(app)
+                print(f"Отладка: Обновлена заявка {app.id}. is_full_payment={app.is_full_payment} "
+                      f"(Excel sum: {excel_sum}, dormitory_cost: {app.dormitory_cost})")
+            else:
+                print(f"Отладка: Для заявки {app.id} ключ {key} не найден в valid_students.")
+
+        # Группируем заявки по результату теста
         grouped_applications = defaultdict(list)
         for app in approved_applications:
             grouped_applications[app.test_result].append(app)
 
-        print("Общее количество одобренных заявок с оплатой:", approved_applications.count())
+        dorms = Dorm.objects.all()
+
+        print("Общее количество одобренных заявок с оплатой и в списке из Excel:", len(approved_applications))
         for test_result, apps in grouped_applications.items():
             print(f"Количество студентов с результатом теста '{test_result}': {len(apps)}")
 
@@ -687,49 +949,48 @@ class DistributeStudentsAPIView2(APIView):
 
         with transaction.atomic():
             for dorm in dorms:
+                print("Отладка: Обрабатываем общежитие", dorm.id, getattr(dorm, 'name', ''))
                 room_counts = {
                     2: dorm.rooms_for_two,
                     3: dorm.rooms_for_three,
                     4: dorm.rooms_for_four
                 }
-
                 room_number = 101
                 room_suffix = 'А'
-
                 for room_size, available_rooms in room_counts.items():
+                    print(f"Отладка: Обработка комнат размера {room_size}, available_rooms: {available_rooms}")
                     for _ in range(available_rooms):
                         students_for_room = self.get_students_for_room(grouped_applications, room_size)
-
                         if not students_for_room:
+                            print("Отладка: Нет студентов для комнаты размера", room_size)
                             continue
-
                         room_label = f"{room_number}{room_suffix}"
-                        print(f"Комната размером {room_size} в общежитии {dorm.id} получает студентов: ",
+                        print(f"Отладка: Комната {room_label} получает студентов: ",
                               [student_application.student.id for student_application in students_for_room])
-
                         for student_application in students_for_room:
+                            # Обновление статуса заявки на 'order'
+                            student_application.status = 'order'
+                            student_application.save()
+                            print(f"Отладка: Обновлен статус заявки {student_application.id} на 'order'")
+
                             student_in_dorm = StudentInDorm.objects.create(
                                 student_id=student_application.student,
                                 dorm_id=dorm,
                                 room=room_label,
                                 application_id=student_application
                             )
-
-                            student_application.status = 'order'
-                            student_application.save()
-
                             allocated_students.append({
                                 "student_email": student_in_dorm.student_id.email,
                                 "dorm_name": getattr(student_in_dorm.dorm_id, "name", "Общежитие"),
                                 "room": student_in_dorm.room
                             })
-
                         room_suffix, room_number = self.update_room_label(room_suffix, room_number)
 
+        print("Отладка: Начинается отправка писем")
         self.send_emails(allocated_students)
 
         allocated_count = len(allocated_students)
-        print("Общее количество студентов, добавленных в StudentInDorm:", allocated_count)
+        print("Отладка: Общее количество студентов, добавленных в StudentInDorm:", allocated_count)
 
         return Response(
             {
@@ -740,7 +1001,6 @@ class DistributeStudentsAPIView2(APIView):
         )
 
     def get_students_for_room(self, grouped_applications, room_size):
-
         for test_result, test_group in grouped_applications.items():
             if len(test_group) >= room_size:
                 students_for_room = [
@@ -773,15 +1033,75 @@ class DistributeStudentsAPIView2(APIView):
     def send_emails(self, allocated_students):
         for student in allocated_students:
             if student["student_email"]:
-                send_mail(
-                    subject="Ордер на заселение в общежитие",
-                    message=f"Поздравляем, вам был выдан ордер на заселение в общежитие!\n"
+                print(f"Отладка: Отправка письма на {student['student_email']}")
+                try:
+                    result = send_mail(
+                        subject="Ордер на заселение в общежитие",
+                        message=(
+                            f"Поздравляем, вам был выдан ордер на заселение в общежитие!\n"
                             f"Общежитие: {student['dorm_name']}\n"
-                            f"Комната: {student['room']}",
+                            f"Комната: {student['room']}"
+                        ),
+                        from_email=settings.EMAIL_HOST_USER,
+                        recipient_list=[student["student_email"]],
+                        fail_silently=False,
+                    )
+                    print(f"Отладка: Результат отправки письма: {result}")
+                except Exception as e:
+                    print(f"Отладка: Ошибка при отправке письма на {student['student_email']}: {e}")
+
+
+
+
+
+class SendPartialPaymentReminderAPIView(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request, *args, **kwargs):
+        # Фильтруем заявки:
+        # выбираем те, у которых:
+        # 1. Заявка одобрена и есть скрин оплаты
+        # 2. Полная оплата ещё не произведена (is_full_payment=False)
+        partial_applications = Application.objects.filter(
+            approval=True,
+            payment_screenshot__isnull=False
+        ).exclude(payment_screenshot="").filter(
+            is_full_payment=False  # Новое булево поле, которое должно быть обновлено при получении полной оплаты
+        )
+
+        reminded_emails = []
+
+        for app in partial_applications:
+            student_email = app.student.email
+            # Можно добавить детали: например, сколько осталось доплатить (если известны расчёты)
+            message = (
+                f"Уважаемый(ая) {app.student.first_name} {app.student.last_name},\n\n"
+                "Наша система показывает, что Вы внесли частичную оплату за общежитие. "
+                "Пожалуйста, обратите внимание, что необходимо внести оставшуюся сумму до установленного срока.\n\n"
+                "С уважением, администрация."
+            )
+
+            try:
+                result = send_mail(
+                    subject="Напоминание о полной оплате общежития",
+                    message=message,
                     from_email=settings.EMAIL_HOST_USER,
-                    recipient_list=[student["student_email"]],
+                    recipient_list=[student_email],
                     fail_silently=False,
                 )
+                reminded_emails.append(student_email)
+                print(f"Отладка: Письмо отправлено на {student_email}, результат: {result}")
+            except Exception as e:
+                print(f"Отладка: Ошибка при отправке письма на {student_email}: {e}")
+
+        return Response(
+            {
+                "detail": "Напоминания отправлены студентам с частичной оплатой.",
+                "reminded_emails": reminded_emails
+            },
+            status=status.HTTP_200_OK
+        )
+
 
 
 
