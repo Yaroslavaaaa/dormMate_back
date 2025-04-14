@@ -7,9 +7,11 @@ from .utils import calculate_application_score
 
 
 class StudentSerializer(serializers.ModelSerializer):
+    region = serializers.PrimaryKeyRelatedField(queryset=Region.objects.all())
     class Meta:
         model = Student
         fields = '__all__'
+
 
 
 class RegionSerializer(serializers.ModelSerializer):
@@ -199,3 +201,23 @@ class ApplicationSerializer(serializers.ModelSerializer):
             for evidence_data in evidences_data:
                 ApplicationEvidence.objects.create(application=instance, **evidence_data)
         return instance
+
+
+
+class StudentInDormSerializer(serializers.ModelSerializer):
+    # Вложенное представление для студента, заявление и общежития.
+    student = StudentSerializer(source='student_id', read_only=True)
+    application = ApplicationSerializer(source='application_id', read_only=True)
+    dorm = DormSerializer(source='dorm_id', read_only=True)
+
+    class Meta:
+        model = StudentInDorm
+        fields = [
+            'id',
+            'student',      # вложенные данные по студенту
+            'dorm',         # вложенные данные по общежитию
+            'group',        # номер группы/комнаты
+            'application',  # вложенные данные по заявке
+            'order',
+            'room'
+        ]

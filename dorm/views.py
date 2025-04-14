@@ -31,6 +31,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.db.models import Sum
 from django.db import transaction
 from collections import defaultdict
+import json
 
 from rest_framework.permissions import BasePermission
 import PyPDF2
@@ -50,6 +51,16 @@ class RegionListView(generics.ListAPIView):
 class DormView(generics.ListAPIView):
     queryset = Dorm.objects.all()
     serializer_class = DormSerializer
+
+
+class DormImageView(generics.ListAPIView):
+    queryset = DormImage.objects.all()
+    serializer_class = DormImageSerializer
+
+
+class StudentInDormView(generics.ListAPIView):
+    queryset = StudentInDorm.objects.all()
+    serializer_class = StudentInDormSerializer
 
 class TestQuestionViewSet(generics.ListAPIView):
     queryset = TestQuestion.objects.all()
@@ -434,16 +445,12 @@ class UploadPaymentScreenshotView(APIView):
         return Response({"message": "Скрин оплаты успешно прикреплен, заявка принята. Ожидайте ордер."}, status=status.HTTP_200_OK)
 
 
-# для получения уведомлений для администратора
 class AdminNotificationListView(APIView):
-    permission_classes = [IsAdmin]  # или свой кастомный пермишн
+    permission_classes = [IsAdmin]
 
     def get(self, request):
-        # Предполагаем, что recipient=текущий пользователь-админ
         notifications = Notification.objects.filter(recipient=request.user, is_read=False)
-        # или, если хотите все: .filter(recipient=request.user)
 
-        # Можно добавить пагинацию, но для примера вернем целиком
         data = [{
             "id": n.id,
             "message": n.message,
@@ -452,7 +459,6 @@ class AdminNotificationListView(APIView):
         return Response(data, status=status.HTTP_200_OK)
 
     def post(self, request):
-        # Отметить уведомления как прочитанные
         ids = request.data.get('notification_ids', [])
         Notification.objects.filter(pk__in=ids, recipient=request.user).update(is_read=True)
         return Response({"detail": "Отмечены прочитанными"}, status=status.HTTP_200_OK)
@@ -461,20 +467,16 @@ class NotificationListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # Возвращаем только уведомления для этого пользователя,
-        # которые не прочитаны
         notifications = Notification.objects.filter(recipient=request.user, is_read=False)
         serializer = NotificationSerializer(notifications, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def post(self, request):
-        # Помечаем уведомления как прочитанные
         notification_ids = request.data.get('notification_ids', [])
         Notification.objects.filter(pk__in=notification_ids, recipient=request.user).update(is_read=True)
         return Response({"detail": "Уведомления помечены как прочитанные"}, status=status.HTTP_200_OK)
 
 
-# Вью для пометки уведомления как прочитанного
 class MarkNotificationAsReadView(generics.UpdateAPIView):
     serializer_class = NotificationSerializer
     permission_classes = [IsAdmin]
@@ -486,13 +488,10 @@ class MarkNotificationAsReadView(generics.UpdateAPIView):
         return Response({"status": "Уведомление отмечено как прочитанное"}, status=status.HTTP_200_OK)
 
 
-# --- Вопросы ---
 class QuestionView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        """Поиск в модели QuestionAnswer (FAQ). Если есть вопрос — возвращаем список ответов,
-           иначе пустой список."""
         search_query = request.query_params.get('search', '')
         if search_query:
             answers = QuestionAnswer.objects.filter(question__icontains=search_query)
@@ -503,8 +502,6 @@ class QuestionView(APIView):
         return Response([], status=status.HTTP_400_BAD_REQUEST)
 
     def post(self, request):
-        """Если вопрос есть в базе, сразу возвращаем answer.
-           Иначе создаём (или получаем) активный чат и отправляем вопрос админу."""
         question = request.data.get('text')
         student = request.user
 
@@ -521,7 +518,6 @@ class QuestionView(APIView):
                 defaults={'status': 'waiting_for_admin'}
             )
             Message.objects.create(chat=chat, sender=student, content=question)
-            # тут можно создать Notification для админа, отправить через channels
             return Response({"message": "Вопрос отправлен администратору"}, status=status.HTTP_201_CREATED)# --- Чаты ---
 
 
@@ -529,7 +525,6 @@ class CreateChatView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        """Ищем активный чат для данного студента. Если нет — создаём новый."""
         student = request.user
         active_chat = Chat.objects.filter(student=student, is_active=True).first()
         if active_chat:
@@ -544,7 +539,6 @@ class StudentChatListView(generics.ListAPIView):
     permission_classes = [IsStudent]
 
     def get_queryset(self):
-        # Студент видит только свои активные чаты
         return Chat.objects.filter(student=self.request.user, is_active=True)
 
 class AdminChatListView(generics.ListAPIView):
@@ -552,10 +546,8 @@ class AdminChatListView(generics.ListAPIView):
     permission_classes = [IsAdmin]
 
     def get_queryset(self):
-        # Администратор видит все активные чаты студентов
         return Chat.objects.filter(is_active=True).order_by('-created_at')
 
-# --- Сообщения ---
 
 class MessageListView(APIView):
     permission_classes = [IsStudentOrAdmin]
@@ -578,8 +570,6 @@ class ChatListView(APIView):
     permission_classes = [IsStudentOrAdmin]
 
     def get(self, request):
-        # Возвращаем только активные чаты;
-        # т.к. связь один к одному – каждый чат уникален для студента
         chats = Chat.objects.filter(is_active=True)
         serializer = ChatSerializer(chats, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -613,10 +603,9 @@ class EndChatView(APIView):
             chat.save()
             return Response({"status": "Чат завершён"}, status=status.HTTP_200_OK)
         return Response({"error": "Нет доступа к этому чату."}, status=status.HTTP_403_FORBIDDEN)
-# --- Запрос оператора ---
 
 class RequestAdminView(APIView):
-    permission_classes = [IsStudent]  # Только студент может запросить оператора
+    permission_classes = [IsStudent]
     def post(self, request):
         chat_id = request.data.get('chat_id')
         chat = get_object_or_404(Chat, id=chat_id, is_active=True, student=request.user)
@@ -641,7 +630,6 @@ class RequestAdminView(APIView):
 
 
 class UpdateEvidenceStatusAPIView(APIView):
-    # Здесь можно добавить permission_classes для админа
     def put(self, request, pk):
         try:
             evidence = ApplicationEvidence.objects.get(pk=pk)
@@ -658,64 +646,6 @@ class EvidenceTypeListAPIView(ListAPIView):
     queryset = EvidenceType.objects.all()
     serializer_class = EvidenceTypeSerializer
 
-
-
-
-
-# class DistributeStudentsAPIView(APIView):
-#     permission_classes = [IsAdmin]
-#
-#     def post(self, request, *args, **kwargs):
-#         total_places = Dorm.objects.aggregate(total_places=models.Sum('total_places'))['total_places']
-#
-#         if not total_places or total_places <= 0:
-#             return Response({"detail": "Нет доступных мест в общежитиях."}, status=status.HTTP_400_BAD_REQUEST)
-#
-#         pending_applications = Application.objects.filter(
-#             approval=False, status="pending"
-#         ).select_related('student').prefetch_related('evidences')
-#
-#         # Сортируем заявки на основе вычисленного балла
-#         sorted_applications = sorted(
-#             pending_applications,
-#             key=lambda app: calculate_application_score(app),
-#             reverse=True
-#         )
-#
-#         selected_applications = sorted_applications[:total_places]
-#         rejected_applications = sorted_applications[total_places:]
-#
-#         approved_students = []
-#
-#         with transaction.atomic():
-#             for application in selected_applications:
-#                 application.approval = True
-#                 application.status = "awaiting_payment"
-#                 application.save()
-#                 approved_students.append({
-#                     "student_s": getattr(application.student, "s", "Нет S"),
-#                     "first_name": getattr(application.student, 'first_name', 'Нет имени'),
-#                     "last_name": getattr(application.student, 'last_name', 'Нет имени'),
-#                     "course": getattr(application.student, 'course', 'Не указан'),
-#                     "ent_result": application.ent_result,
-#                     "gpa": application.gpa,
-#                 })
-#
-#             for application in rejected_applications:
-#                 application.status = "rejected"
-#                 application.save()
-#
-#         return Response(
-#             {
-#                 "detail": f"{len(selected_applications)} студентов были одобрены для заселения.",
-#                 "approved_students": approved_students
-#             },
-#             status=status.HTTP_200_OK
-#         )
-
-
-
-# Первый эндпоинт: формирование списка для проверки администратором
 
 class GenerateSelectionAPIView(APIView):
     permission_classes = [IsAdmin]
@@ -775,13 +705,6 @@ class GenerateSelectionAPIView(APIView):
 
 
 
-
-
-
-
-
-
-# Второй эндпоинт: перевод одобренных заявок в статус "awaiting_payment" и уведомление студентов
 
 
 
@@ -866,18 +789,18 @@ class NotifyApprovedStudentsAPIView(APIView):
 
 
 
-class DistributeStudentsAPIView2(APIView):
+
+class PaymentConfirmationAPIView(APIView):
     permission_classes = [IsAdmin]
 
     def post(self, request, *args, **kwargs):
-        # Загружаем Excel‑файл, переданный администратором
+        # 1. Загрузка и валидация Excel‑файла
         excel_file = request.FILES.get('excel_file')
         if not excel_file:
             return Response(
                 {"detail": "Excel‑файл обязателен для проверки данных студентов."},
                 status=status.HTTP_400_BAD_REQUEST
             )
-
         try:
             df = pd.read_excel(excel_file)
         except Exception as e:
@@ -886,9 +809,8 @@ class DistributeStudentsAPIView2(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Формируем словарь валидных студентов из Excel‑файла.
-        # Ключ – кортеж (first_name, last_name, middle_name, phone_number),
-        # значение – сумма из файла (sum)
+        # Формирование словаря валидных студентов:
+        # ключ – (first_name, last_name, middle_name, phone_number)
         valid_students = {}
         for index, row in df.iterrows():
             key = (
@@ -899,158 +821,286 @@ class DistributeStudentsAPIView2(APIView):
             )
             valid_students[key] = row['sum']
 
-        print("Отладка: Содержимое словаря valid_students:")
-        for key, value in valid_students.items():
-            print(f"{key} : {value}")
-
-        # Получаем заявки, у которых одобрено и есть скрин оплаты
+        # 2. Получение одобренных заявок с наличием скрина оплаты
         approved_applications_all = Application.objects.filter(
             approval=True,
             payment_screenshot__isnull=False
         ).exclude(payment_screenshot="")
 
-        approved_applications = []
-        for app in approved_applications_all:
-            student = app.student
-            key = (
-                student.first_name.strip() if student.first_name and isinstance(student.first_name, str) else student.first_name,
-                student.last_name.strip() if student.last_name and isinstance(student.last_name, str) else student.last_name,
-                student.middle_name.strip() if student.middle_name and isinstance(student.middle_name, str) else student.middle_name,
-                str(student.phone_number).strip()
-            )
-            if key in valid_students:
-                excel_sum = valid_students[key]
-                # Сравнение суммы из Excel с dormitory_cost из заявки
-                if excel_sum == app.dormitory_cost:
-                    app.is_full_payment = True
-                elif excel_sum == (app.dormitory_cost / 2):
-                    app.is_full_payment = False
-                else:
-                    app.is_full_payment = None  # Неопределено
-                app.save()
-                approved_applications.append(app)
-                print(f"Отладка: Обновлена заявка {app.id}. is_full_payment={app.is_full_payment} "
-                      f"(Excel sum: {excel_sum}, dormitory_cost: {app.dormitory_cost})")
-            else:
-                print(f"Отладка: Для заявки {app.id} ключ {key} не найден в valid_students.")
-
-        # Группируем заявки по результату теста
-        grouped_applications = defaultdict(list)
-        for app in approved_applications:
-            grouped_applications[app.test_result].append(app)
-
-        dorms = Dorm.objects.all()
-
-        print("Общее количество одобренных заявок с оплатой и в списке из Excel:", len(approved_applications))
-        for test_result, apps in grouped_applications.items():
-            print(f"Количество студентов с результатом теста '{test_result}': {len(apps)}")
-
-        allocated_students = []
-
+        added_students = []
         with transaction.atomic():
-            for dorm in dorms:
-                print("Отладка: Обрабатываем общежитие", dorm.id, getattr(dorm, 'name', ''))
-                room_counts = {
-                    2: dorm.rooms_for_two,
-                    3: dorm.rooms_for_three,
-                    4: dorm.rooms_for_four
-                }
-                room_number = 101
-                room_suffix = 'А'
-                for room_size, available_rooms in room_counts.items():
-                    print(f"Отладка: Обработка комнат размера {room_size}, available_rooms: {available_rooms}")
-                    for _ in range(available_rooms):
-                        students_for_room = self.get_students_for_room(grouped_applications, room_size)
-                        if not students_for_room:
-                            print("Отладка: Нет студентов для комнаты размера", room_size)
-                            continue
-                        room_label = f"{room_number}{room_suffix}"
-                        print(f"Отладка: Комната {room_label} получает студентов: ",
-                              [student_application.student.id for student_application in students_for_room])
-                        for student_application in students_for_room:
-                            # Обновление статуса заявки на 'order'
-                            student_application.status = 'order'
-                            student_application.save()
-                            print(f"Отладка: Обновлен статус заявки {student_application.id} на 'order'")
+            for app in approved_applications_all:
+                student = app.student
+                key = (
+                    student.first_name.strip() if student.first_name and isinstance(student.first_name, str) else student.first_name,
+                    student.last_name.strip() if student.last_name and isinstance(student.last_name, str) else student.last_name,
+                    student.middle_name.strip() if student.middle_name and isinstance(student.middle_name, str) else student.middle_name,
+                    str(student.phone_number).strip()
+                )
+                if key in valid_students:
+                    excel_sum = valid_students[key]
+                    if excel_sum == app.dormitory_cost:
+                        app.is_full_payment = True
+                    elif excel_sum == (app.dormitory_cost / 2):
+                        app.is_full_payment = False
+                    else:
+                        app.is_full_payment = None
+                    app.save()
 
-                            student_in_dorm = StudentInDorm.objects.create(
-                                student_id=student_application.student,
-                                dorm_id=dorm,
-                                room=room_label,
-                                application_id=student_application
+                    # Если оплата подтверждена (значение не None),
+                    # создаём запись в StudentInDorm без выбора общаги – распределение останется во второй вьюшке.
+                    if app.is_full_payment is not None:
+                        # Создадим запись, оставив dorm_id незаполненным (при условии, что поле допускает null)
+                        # и статус оставим "waiting_order"
+                        if not StudentInDorm.objects.filter(student_id=app.student, application_id=app).exists():
+                            StudentInDorm.objects.create(
+                                student_id=app.student,
+                                dorm_id=None,
+                                group=None,        # группа не назначена
+                                application_id=app,
+                                status='waiting_order'
                             )
-                            allocated_students.append({
-                                "student_email": student_in_dorm.student_id.email,
-                                "dorm_name": getattr(student_in_dorm.dorm_id, "name", "Общежитие"),
-                                "room": student_in_dorm.room
+                            added_students.append({
+                                "student_email": student.email,
+                                "application_id": app.id
                             })
-                        room_suffix, room_number = self.update_room_label(room_suffix, room_number)
-
-        print("Отладка: Начинается отправка писем")
-        self.send_emails(allocated_students)
-
-        allocated_count = len(allocated_students)
-        print("Отладка: Общее количество студентов, добавленных в StudentInDorm:", allocated_count)
 
         return Response(
             {
-                "detail": "Студенты успешно распределены по комнатам.",
+                "detail": "Оплата подтверждена. Студенты добавлены в StudentInDorm с статусом 'waiting_order'.",
+                "added_students": added_students
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+
+
+
+
+class DistributeStudentsAPIView2(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request, *args, **kwargs):
+        # Выбираем записи из StudentInDorm, у которых статус = 'waiting_order'
+        # и dorm_id ещё не назначен.
+        pending_records = StudentInDorm.objects.filter(status='waiting_order', dorm_id__isnull=True)
+        if not pending_records.exists():
+            return Response(
+                {"detail": "Нет студентов, ожидающих распределения по общежитиям."},
+                status=status.HTTP_200_OK
+            )
+
+        # Группируем записи по стоимости общежития (берём стоимость из заявки)
+        cost_to_records = defaultdict(list)
+        for record in pending_records:
+            cost = record.application_id.dormitory_cost
+            cost_to_records[cost].append(record)
+
+        allocated_students = []
+        global_group_counter = 1  # счетчик для уникальных номеров групп
+
+        with transaction.atomic():
+            for cost, records in cost_to_records.items():
+                # Получаем общежития, соответствующие стоимости
+                dorms_for_cost = Dorm.objects.filter(cost=cost)
+                if not dorms_for_cost.exists():
+                    continue
+
+                # Для распределения можно перебрать общежития по очереди
+                # (пример ниже использует первое найденное; при желании можно распределять равномерно)
+                for dorm in dorms_for_cost:
+                    # Формируем список слотов (комнат) согласно настройкам общежития
+                    room_slots = []
+                    room_slots.extend([2] * (dorm.rooms_for_two or 0))
+                    room_slots.extend([3] * (dorm.rooms_for_three or 0))
+                    room_slots.extend([4] * (dorm.rooms_for_four or 0))
+                    if not room_slots:
+                        continue
+
+                    # Отбираем записи для распределения – только те, которые ещё не получили общагу
+                    remaining_records = [rec for rec in records if rec.dorm_id is None]
+                    if not remaining_records:
+                        continue
+
+                    # Разбиваем записи по полу
+                    male_records = [rec for rec in remaining_records if rec.student_id.gender and rec.student_id.gender.upper() == 'M']
+                    female_records = [rec for rec in remaining_records if rec.student_id.gender and rec.student_id.gender.upper() == 'F']
+
+                    for slot_size in sorted(room_slots):
+                        candidate_pool = None
+                        chosen_gender = None
+                        if len(male_records) >= slot_size and len(female_records) >= slot_size:
+                            if len(male_records) >= len(female_records):
+                                candidate_pool = male_records
+                                chosen_gender = 'M'
+                            else:
+                                candidate_pool = female_records
+                                chosen_gender = 'F'
+                        elif len(male_records) >= slot_size:
+                            candidate_pool = male_records
+                            chosen_gender = 'M'
+                        elif len(female_records) >= slot_size:
+                            candidate_pool = female_records
+                            chosen_gender = 'F'
+                        else:
+                            continue
+
+                        allocated_group = self.allocate_slot(candidate_pool, slot_size)
+                        if not allocated_group:
+                            continue
+
+                        for rec in allocated_group:
+                            if chosen_gender == 'M' and rec in male_records:
+                                male_records.remove(rec)
+                            elif chosen_gender == 'F' and rec in female_records:
+                                female_records.remove(rec)
+                            # Назначаем данному студенту выбранное общежитие и группу
+                            rec.dorm_id = dorm
+                            rec.group = str(global_group_counter)
+                            # Статус остаётся "waiting_order"
+                            rec.save()
+                            allocated_students.append({
+                                "student_email": rec.student_id.email,
+                                "dorm_name": dorm.name,
+                                "group": rec.group
+                            })
+                        global_group_counter += 1
+
+                    # Распределяем оставшиеся записи по полу (если есть)
+                    if male_records:
+                        group_label = str(global_group_counter)
+                        global_group_counter += 1
+                        for rec in male_records:
+                            rec.dorm_id = dorm
+                            rec.group = group_label
+                            rec.save()
+                            allocated_students.append({
+                                "student_email": rec.student_id.email,
+                                "dorm_name": dorm.name,
+                                "group": group_label
+                            })
+                    if female_records:
+                        group_label = str(global_group_counter)
+                        global_group_counter += 1
+                        for rec in female_records:
+                            rec.dorm_id = dorm
+                            rec.group = group_label
+                            rec.save()
+                            allocated_students.append({
+                                "student_email": rec.student_id.email,
+                                "dorm_name": dorm.name,
+                                "group": group_label
+                            })
+
+        return Response(
+            {
+                "detail": "Студенты успешно распределены по общежитиям и группам.",
                 "allocated_students": allocated_students
             },
             status=status.HTTP_200_OK
         )
 
-    def get_students_for_room(self, grouped_applications, room_size):
-        for test_result, test_group in grouped_applications.items():
-            if len(test_group) >= room_size:
-                students_for_room = [
-                    student for student in test_group[:room_size]
-                    if not StudentInDorm.objects.filter(student_id=student.student).exists()
-                ]
-                grouped_applications[test_result] = [
-                    student for student in test_group if student not in students_for_room
-                ]
-                return students_for_room
+    def allocate_slot(self, candidate_pool, slot_size):
+        """
+        Функция пытается выделить слот (комнату) требуемого размера из списка записей StudentInDorm.
+        Сначала группирует записи по результату теста (поле test_result заявки)
+        и, желательно, по языковому предпочтению (из test_answers, где 'A' – казахский, 'B' – русский).
+        Если записей меньше, чем slot_size, возвращает None.
+        """
+        if len(candidate_pool) < slot_size:
+            return None
 
-        remaining_students = [
-            student for group in grouped_applications.values() for student in group
-            if not StudentInDorm.objects.filter(student_id=student.student).exists()
-        ]
-        if remaining_students:
-            students_for_room = remaining_students[:room_size]
-            for student in students_for_room:
-                grouped_applications[student.test_result].remove(student)
-            return students_for_room
+        groups = defaultdict(list)
+        for record in candidate_pool:
+            groups[record.application_id.test_result].append(record)
 
-        return []
+        for test_result, recs in groups.items():
+            if len(recs) >= slot_size:
+                lang_groups = defaultdict(list)
+                for record in recs:
+                    lang = self.get_language_from_record(record)
+                    lang_groups[lang].append(record)
+                for lang in ['A', 'B']:
+                    if lang_groups.get(lang, []) and len(lang_groups[lang]) >= slot_size:
+                        return lang_groups[lang][:slot_size]
+                return recs[:slot_size]
 
-    def update_room_label(self, room_suffix, room_number):
-        if room_suffix == 'А':
-            return 'Б', room_number
-        else:
-            return 'А', room_number + 1
+        sorted_groups = sorted(groups.items(), key=lambda x: len(x[1]), reverse=True)
+        largest_group_recs = sorted_groups[0][1]
+        allocated = largest_group_recs[:]
+        remaining_needed = slot_size - len(allocated)
+        remaining = [record for record in candidate_pool if record not in allocated]
+        if len(remaining) < remaining_needed:
+            return None
+        allocated.extend(remaining[:remaining_needed])
+        if len(allocated) == slot_size:
+            return allocated
+        return None
 
-    def send_emails(self, allocated_students):
-        for student in allocated_students:
-            if student["student_email"]:
-                print(f"Отладка: Отправка письма на {student['student_email']}")
-                try:
-                    result = send_mail(
-                        subject="Ордер на заселение в общежитие",
-                        message=(
-                            f"Поздравляем, вам был выдан ордер на заселение в общежитие!\n"
-                            f"Общежитие: {student['dorm_name']}\n"
-                            f"Комната: {student['room']}"
-                        ),
-                        from_email=settings.EMAIL_HOST_USER,
-                        recipient_list=[student["student_email"]],
-                        fail_silently=False,
-                    )
-                    print(f"Отладка: Результат отправки письма: {result}")
-                except Exception as e:
-                    print(f"Отладка: Ошибка при отправке письма на {student['student_email']}: {e}")
+    def get_language_from_record(self, record):
+        """
+        Извлекает языковое предпочтение из поля test_answers заявки.
+        Предполагается, что test_answers хранит JSON-массив, где первый элемент – ответ ('A' – казахский, 'B' – русский, 'C' – оба).
+        """
+        try:
+            answers = record.application_id.test_answers
+            if isinstance(answers, str):
+                answers = json.loads(answers)
+            if isinstance(answers, list) and len(answers) > 0:
+                return answers[0]
+        except Exception as e:
+            return None
 
 
+
+class IssueOrderAPIView(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request, *args, **kwargs):
+        # Выбираем все записи в StudentInDorm, у которых связанная заявка имеет статус "awaiting_order"
+        waiting_records = StudentInDorm.objects.filter(application_id__status='awaiting_order')
+        processed_students = []
+        for record in waiting_records:
+            # Обновляем статус заявки, связанной с данной записью
+            application = record.application_id
+            application.status = 'order'
+            application.save()
+
+            student = record.student_id  # объект модели Student
+            dorm = record.dorm_id        # объект модели Dorm (возможно, может быть None, если общага не назначена)
+            room = record.room
+
+            dorm_name = dorm.name if dorm is not None else "Не назначена"
+
+            try:
+                send_mail(
+                    subject="Ордер на заселение в общежитие",
+                    message=(
+                        f"Поздравляем, вам выдан ордер на заселение в общежитие!\n"
+                        f"Общежитие: {dorm_name}\n"
+                        f"Комната: {room}"
+                    ),
+                    from_email=settings.EMAIL_HOST_USER,
+                    recipient_list=[student.email],
+                    fail_silently=False,
+                )
+            except Exception as e:
+                print(f"Ошибка отправки письма на {student.email}: {e}")
+
+            processed_students.append({
+                "student_email": student.email,
+                "dorm_name": dorm_name,
+                "room": room
+            })
+
+        return Response(
+            {
+                "detail": "Статусы обновлены и письма отправлены.",
+                "processed_students": processed_students
+            },
+            status=status.HTTP_200_OK
+        )
 
 
 
@@ -1328,6 +1378,21 @@ class DormsViewSet(viewsets.ModelViewSet):
     # permission_classes = [IsAdmin]
 
 
+class DormImageViewSet(viewsets.ModelViewSet):
+    queryset = DormImage.objects.all()
+    serializer_class = DormImageSerializer
+    # permission_classes = [IsAdmin]
+
+    def perform_create(self, serializer):
+        dorm_id = self.request.data.get("dorm")
+        if dorm_id:
+            try:
+                dorm_obj = Dorm.objects.get(id=dorm_id)
+            except Dorm.DoesNotExist:
+                raise ValidationError(f"Общага с id {dorm_id} не существует.")
+            serializer.save(dorm=dorm_obj)
+        else:
+            raise ValidationError("Поле 'dorm' обязательно для заполнения.")
 
 
 class StudentsViewSet(viewsets.ModelViewSet):
@@ -1339,8 +1404,10 @@ class StudentsViewSet(viewsets.ModelViewSet):
         s_value = serializer.validated_data.get('s')
         if Student.objects.filter(s=s_value).exists():
             raise ValidationError(f"Student with s = {s_value} already exists.")
-
         serializer.save()
+
+
+
 
 
 
@@ -1422,3 +1489,123 @@ class ApplicationListView(ListAPIView):
             )
 
         return queryset
+
+
+
+
+
+class AssignRoomAPIView(APIView):
+    permission_classes = [IsAdmin]  # или ваш кастомный IsAdmin
+
+    def post(self, request, *args, **kwargs):
+        """
+        Ожидается, что фронтенд отправит JSON-объект вида:
+        {
+            "student_ids": [1, 3, 5],
+            "room": "101A"
+        }
+        Вьюшка обновит поле room для записей StudentInDorm с указанными id.
+        """
+        student_ids = request.data.get("student_ids")
+        room_number = request.data.get("room")
+
+        if not student_ids or not isinstance(student_ids, list):
+            return Response(
+                {"detail": "Необходимо передать список идентификаторов студентов."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if not room_number:
+            return Response(
+                {"detail": "Необходимо указать номер комнаты."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        with transaction.atomic():
+            qs = StudentInDorm.objects.filter(id__in=student_ids)
+            if not qs.exists():
+                return Response(
+                    {"detail": "Записи по переданным id не найдены."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            updated_count = qs.update(room=room_number)
+
+        return Response(
+            {"detail": f"Номер комнаты '{room_number}' назначен для {updated_count} студентов."},
+            status=status.HTTP_200_OK
+        )
+
+
+class StudentApplicationUpdateView(APIView):
+    """
+    Вьюшка для обновления заявки студентом.
+    Студент может менять только dormitory_cost и добавлять/удалять свои справки.
+    ID заявки берется из авторизованного пользователя (через request.user.application).
+
+    Ожидаемый формат запроса (JSON или multipart, если передаются файлы):
+    {
+       "dormitory_cost": 1234,  # Опционально – новая цена проживания
+       "add_evidences": [
+            {
+                "evidence_type": <evidence_type_id>,
+                # если файл передается, его обработку нужно реализовать через multipart,
+                # либо передавать URL/данные файла – здесь пример без файла:
+                "numeric_value": 95.5
+            },
+            ... // можно добавить несколько справок
+       ],
+       "delete_evidences": [3, 5]  # Список id справок, которые нужно удалить
+    }
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        """Получение данных заявки студента."""
+        try:
+            application = request.user.application
+        except Application.DoesNotExist:
+            return Response({"detail": "Заявка не найдена."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ApplicationSerializer(application, context={'request': request})
+        return Response(serializer.data)
+
+    def patch(self, request, *args, **kwargs):
+
+        try:
+            application = request.user.application
+        except Application.DoesNotExist:
+            return Response({"detail": "Заявка не найдена."}, status=status.HTTP_404_NOT_FOUND)
+
+        data = request.data
+
+        new_cost = data.get("dormitory_cost", None)
+        if new_cost is not None:
+            application.dormitory_cost = new_cost
+            application.save()
+
+        added_evidences = []
+        add_list = data.get("add_evidences", [])
+        for evidence_data in add_list:
+            evidence_data["application"] = application.id
+            serializer = ApplicationEvidenceSerializer(data=evidence_data, context={'request': request})
+            if serializer.is_valid():
+                serializer.save()
+                added_evidences.append(serializer.data)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        deleted_ids = []
+        delete_list = data.get("delete_evidences", [])
+        for evidence_id in delete_list:
+            try:
+                evidence = ApplicationEvidence.objects.get(id=evidence_id, application=application)
+                evidence.delete()
+                deleted_ids.append(evidence_id)
+            except ApplicationEvidence.DoesNotExist:
+                pass
+
+        application.refresh_from_db()
+        serializer = ApplicationSerializer(application, context={'request': request})
+        return Response({
+            "application": serializer.data,
+            "added_evidences": added_evidences,
+            "deleted_evidences": deleted_ids,
+        }, status=status.HTTP_200_OK)

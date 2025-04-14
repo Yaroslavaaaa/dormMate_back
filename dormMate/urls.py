@@ -1,4 +1,6 @@
 from django.contrib import admin
+from django.conf import settings
+from django.conf.urls.static import static
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
@@ -9,6 +11,7 @@ from dorm.views import *
 router = DefaultRouter()
 router.register(r'dorms', DormsViewSet, basename='dorm')
 router.register(r'students', StudentsViewSet, basename='students')
+router.register(r'dorm-images', DormImageViewSet, basename='dorm-images')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -29,11 +32,12 @@ urlpatterns = [
     # path('questions/create/', QuestionCreateView.as_view(), name='question-create'),
     # path('answers/create/', AnswerCreateView.as_view(), name='answer-create'),    path('api/v1/distribute-students/', DistributeStudentsAPIView.as_view(), name='distribute-students'),
     path('api/v1/distribute-students2/', DistributeStudentsAPIView2.as_view(), name='distribute-students'),
+    path('api/v1/issue-order/', IssueOrderAPIView.as_view(), name='issue_order'),
     path('api/v1/studentdetail/', StudentDetailView.as_view(), name='student_detail'),
     path("api/v1/logout/", LogoutView.as_view(), name="logout"),
     path("api/v1/usertype/", UserTypeView.as_view(), name="usertype"),
     path('api/v1/change_password/', ChangePasswordView.as_view(), name='change_password'),
-    path('api/v1/applications', ApplicationViewSet.as_view(), name='applications'),
+    path('api/v1/applications/', ApplicationViewSet.as_view(), name='applications'),
     path('api/v1/applications/<int:application_id>/delete/', DeleteStudentApplicationAPIView.as_view(),name='delete_application'),
     path('api/v1/applications/<int:application_id>/approve/',ApproveStudentApplicationAPIView.as_view(), name='approve_application'),
     path('api/v1/applications/<int:application_id>/reject/',RejectStudentApplicationAPIView.as_view(), name='approve_application'),
@@ -67,6 +71,15 @@ urlpatterns = [
     path('api/v1/reminder/partial-payment/', SendPartialPaymentReminderAPIView.as_view(), name='partial_payment_reminder'),
     path('api/v1/generate-selection/', GenerateSelectionAPIView.as_view(), name='generate-selection'),
     path('api/v1/notify-approved/', NotifyApprovedStudentsAPIView.as_view(), name='notify-approved'),
+    path('api/v1/student-in-dorm/', StudentInDormView.as_view(), name='student-in-dorm'),
+    path('api/v1/payment-confirmation/', PaymentConfirmationAPIView.as_view(), name='payment-confirmation'),
+    path('api/v1/assign-room/', AssignRoomAPIView.as_view(), name='assign_room'),
+    path('api/v1/student/application/', StudentApplicationUpdateView.as_view(), name='student-application-update'),
 
 
 ]
+
+
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
