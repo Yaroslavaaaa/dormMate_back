@@ -51,7 +51,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         ('F', 'Female'),
     ]
 
-    s = models.CharField(max_length=100, unique=True)
+    s = models.CharField(max_length=100, unique=True, null=True)
     first_name = models.CharField(max_length=30, blank=True)
     last_name = models.CharField(max_length=30, blank=True)
     middle_name = models.CharField(max_length=100, verbose_name="Отчество", blank=True, null=True)
@@ -75,7 +75,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     REQUIRED_FIELDS = []
 
     def __str__(self):
-        return self.s
+        return f"{self.first_name} {self.last_name} {self.middle_name}"
 
     def save(self, *args, **kwargs):
         if self.password and not self.password.startswith('pbkdf2_sha256$'):
@@ -315,10 +315,11 @@ class QuestionAnswer(models.Model):
 
 class StudentInDorm(models.Model):
     student_id = models.ForeignKey(Student, on_delete=models.CASCADE, verbose_name="student", related_name="Студент")
-    dorm_id = models.ForeignKey(Dorm, on_delete=models.CASCADE, verbose_name="dorm", related_name="Общежитие")
-    room = models.CharField(max_length=10, null=True, blank=True, verbose_name="Комната")
+    dorm_id = models.ForeignKey(Dorm, on_delete=models.CASCADE, verbose_name="dorm", related_name="Общежитие", null=True)
+    group = models.IntegerField(max_length=10, null=True, blank=True, verbose_name="Группа")
     application_id = models.ForeignKey(Application, on_delete=models.CASCADE, verbose_name="application", related_name="Заявление")
     order = models.ImageField(upload_to='orders/', null=True, blank=True, verbose_name="Ордер")
+    room = models.CharField(max_length=10, null=True, blank=True, verbose_name="Комната")
 
     def __str__(self):
         return f"{self.student_id}"
