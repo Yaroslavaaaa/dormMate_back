@@ -326,4 +326,10 @@ class StudentInDorm(models.Model):
 
 
 
+class KnowledgeBase(models.Model):
+    question_keywords = models.TextField(verbose_name="Ключевые слова/вопрос")
+    answer = models.TextField(verbose_name="Ответ")
+
+    def __str__(self):
+        return self.question_keywords[:50]
 

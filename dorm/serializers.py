@@ -126,6 +126,10 @@ class QuestionAnswerSerializer(serializers.ModelSerializer):
         model = QuestionAnswer
         fields = '__all__'
 
+class KnowledgeBaseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = KnowledgeBase
+        fields = ['id', 'question_keywords', 'answer']
 
 
 class EvidenceTypeSerializer(serializers.ModelSerializer):

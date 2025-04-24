@@ -72,6 +72,11 @@ class ApplicationViewSet(generics.ListAPIView):
     serializer_class = ApplicationSerializer
 
 
+class KnowledgeBaseListView(generics.ListAPIView):
+    queryset = KnowledgeBase.objects.all()
+    serializer_class = KnowledgeBaseSerializer
+    permission_classes = [permissions.IsAdminUser]
+
 class IsAdmin(IsAuthenticated):
     def has_permission(self, request, view):
         is_authenticated = super().has_permission(request, view)
@@ -583,11 +588,51 @@ class SendMessageView(APIView):
         if not text:
             return Response({"error": "Сообщение не может быть пустым"}, status=status.HTTP_400_BAD_REQUEST)
 
-        receiver = chat.student if request.user.is_staff else User.objects.filter(is_staff=True).first()
+        sender = request.user
+        receiver = chat.student if sender.is_staff else User.objects.filter(is_staff=True).first()
 
-        Message.objects.create(chat=chat, sender=request.user, receiver=receiver, content=text)
+        # Сохраняем сообщение от студента/админа
+        Message.objects.create(chat=chat, sender=sender, receiver=receiver, content=text)
 
-        Notification.objects.create(recipient=receiver, message=f"Новое сообщение: {text[:50]}")
+        # Если это студент — запускаем AI
+        if not sender.is_staff:
+            ai_answer = find_best_answer(text)
+
+            if ai_answer and "не знаю" not in ai_answer.lower():
+                # AI нашёл ответ — отправляем его от имени "бота"
+                bot_user = User.objects.filter(s="F22016183").first()
+                if not bot_user:
+                    bot_user = User.objects.create(username="DormMateBot", is_staff=True)
+                Message.objects.create(chat=chat, sender=bot_user, receiver=sender, content=ai_answer)
+                return Response({"status": "Ответ сгенерирован ботом"}, status=status.HTTP_201_CREATED)
+
+            else:
+                # AI не нашёл ответ — уведомляем админа
+                admin = User.objects.filter(is_staff=True).first()
+                Notification.objects.create(
+                    recipient=admin,
+                    message=f"Новый вопрос в чате #{chat.id}, требуется участие оператора."
+                )
+
+                channel_layer = get_channel_layer()
+                async_to_sync(channel_layer.group_send)(
+                    "admin_notifications",
+                    {
+                        "type": "new_chat",
+                        "chat_id": chat.id,
+                        "student": sender.username,
+                        "question": text
+                    }
+                )
+
+                Message.objects.create(
+                    chat=chat,
+                    sender=None,  # Можно использовать специального "системного" пользователя
+                    receiver=sender,
+                    content="Спасибо за вопрос! Наш оператор скоро подключится к чату и поможет вам."
+                )
+
+                return Response({"status": "Оператор уведомлён, бот не смог ответить"}, status=status.HTTP_200_OK)
 
         return Response({"status": "Сообщение отправлено"}, status=status.HTTP_201_CREATED)
 
@@ -625,6 +670,7 @@ class RequestAdminView(APIView):
             }
         )
         return Response({"status": "Оператор уведомлен"}, status=status.HTTP_200_OK)
+
 
 
 

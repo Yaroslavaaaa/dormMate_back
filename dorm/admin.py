@@ -109,20 +109,25 @@ class ApplicationAdmin(admin.ModelAdmin):
 
 @admin.register(Message)
 class MessageAdmin(admin.ModelAdmin):
-    list_display = ('id', 'sender', 'receiver', 'content', 'timestamp')  # ✅ Поля соответствуют модели
-    list_filter = ('timestamp',)  # ✅ Поле существует в модели
+    list_display = ('id', 'sender', 'receiver', 'content', 'timestamp')
+    list_filter = ('timestamp',)
     search_fields = ('content',)
 
-# ✅ Регистрация модели Chat
+
 @admin.register(Chat)
 class ChatAdmin(admin.ModelAdmin):
-    list_display = ['id', 'student', 'status', 'created_at']  # убраны admin, updated_at
-    list_filter = ['status', 'created_at']  # убран updated_at
+    list_display = ['id', 'student', 'status', 'created_at']
+    list_filter = ['status', 'created_at']
     search_fields = ['student__username', 'status']
-# ✅ Регистрация модели Notification
+
+
 @admin.register(Notification)
 class NotificationAdmin(admin.ModelAdmin):
     list_display = ('id', 'recipient', 'message', 'created_at', 'is_read')
     list_filter = ('created_at', 'is_read')
 
 
+@admin.register(KnowledgeBase)
+class KnowledgeBaseAdmin(admin.ModelAdmin):
+    list_display = ('question_keywords', 'answer')
+    search_fields = ('question_keywords', 'answer')
