@@ -1,8 +1,8 @@
 from dorm.models import EvidenceType
 from django.core.mail import send_mail
 from django.conf import settings
-
-
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 def send_email_notification(email, message):
@@ -55,3 +55,27 @@ def calculate_application_score(application):
                     if auto_value is not None:
                         score += et.priority * float(auto_value)
     return score
+
+
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+def find_best_answer(question):
+    from dorm.models import KnowledgeBase
+
+    entries = KnowledgeBase.objects.all()
+
+    best_answer = "Извините, я пока не знаю ответа на этот вопрос."
+    best_score = 0.0
+
+    # 👉 вот здесь определяем user_vector
+    user_vector = model.encode([question])
+
+    for entry in entries:
+        entry_vector = model.encode([entry.question_keywords])
+        score = cosine_similarity(user_vector, entry_vector)[0][0]
+
+        if score > best_score:
+            best_score = score
+            best_answer = entry.answer
+
+    return best_answer

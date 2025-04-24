@@ -28,9 +28,6 @@ urlpatterns = [
     path('api/v1/custom_token/', CustomTokenObtainView.as_view(), name='custom_token_obtain'),
     path('api/v1/application_status/', ApplicationStatusView.as_view(), name='application_status'),
     path('api/v1/upload_payment_screenshot/', UploadPaymentScreenshotView.as_view(), name='upload_payment_screenshot'),
-    # path('questions/', QuestionListView.as_view(), name='question-list'),
-    # path('questions/create/', QuestionCreateView.as_view(), name='question-create'),
-    # path('answers/create/', AnswerCreateView.as_view(), name='answer-create'),    path('api/v1/distribute-students/', DistributeStudentsAPIView.as_view(), name='distribute-students'),
     path('api/v1/distribute-students2/', DistributeStudentsAPIView2.as_view(), name='distribute-students'),
     path('api/v1/issue-order/', IssueOrderAPIView.as_view(), name='issue_order'),
     path('api/v1/studentdetail/', StudentDetailView.as_view(), name='student_detail'),
@@ -51,6 +48,8 @@ urlpatterns = [
     path('api/v1/', include(router.urls)),
     path('api/v1/applications/', ApplicationListView.as_view(), name='application-list'),
     path('api/v1/regions/', RegionListView.as_view(), name='region-list'),
+
+    path('knowledge/', KnowledgeBaseListView.as_view(), name='knowledge-base'),
 
     path('api/v1/questions/', QuestionView.as_view(), name='question'),
     path('api/v1/student/chats/', StudentChatListView.as_view(), name='student-chat-list'),
