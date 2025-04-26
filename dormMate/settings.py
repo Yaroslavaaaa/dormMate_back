@@ -208,7 +208,7 @@ EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'yaroslava.vuiko@narxoz.kz'
-EMAIL_HOST_PASSWORD = 'YA242004'
+EMAIL_HOST_PASSWORD = 'ixkn alnp jzuq eeow'
 
 
 CHANNEL_LAYERS = {

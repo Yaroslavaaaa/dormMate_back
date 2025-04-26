@@ -118,11 +118,14 @@ class Admin(User):
 
 class Dorm(models.Model):
     name = models.CharField(max_length=255, verbose_name="Название")
+    description = models.TextField(blank=True, verbose_name="Описание")
+    address = models.CharField(max_length=255, verbose_name="Адрес")
     total_places = models.PositiveIntegerField(verbose_name="Количество мест")
     rooms_for_two = models.PositiveIntegerField(verbose_name="Количество комнат на 2")
     rooms_for_three = models.PositiveIntegerField(verbose_name="Количество комнат на 3")
     rooms_for_four = models.PositiveIntegerField(verbose_name="Количество комнат на 4")
     cost = models.PositiveIntegerField(verbose_name="Стоимость")
+
 
     def __str__(self):
         return self.name
@@ -185,7 +188,7 @@ class EvidenceType(models.Model):
     keywords = models.ManyToManyField('Keyword', through='EvidenceKeyword', blank=True, verbose_name="Ключевые слова")
 
     def __str__(self):
-        return self.name
+        return self.code
 
 
 

@@ -891,7 +891,11 @@ class PaymentConfirmationAPIView(APIView):
                         app.is_full_payment = False
                     else:
                         app.is_full_payment = None
+
+                    app.status = 'waiting_order'
                     app.save()
+
+
 
                     # Если оплата подтверждена (значение не None),
                     # создаём запись в StudentInDorm без выбора общаги – распределение останется во второй вьюшке.
@@ -902,9 +906,8 @@ class PaymentConfirmationAPIView(APIView):
                             StudentInDorm.objects.create(
                                 student_id=app.student,
                                 dorm_id=None,
-                                group=None,        # группа не назначена
+                                group=None,
                                 application_id=app,
-                                status='waiting_order'
                             )
                             added_students.append({
                                 "student_email": student.email,
@@ -928,175 +931,166 @@ class DistributeStudentsAPIView2(APIView):
     permission_classes = [IsAdmin]
 
     def post(self, request, *args, **kwargs):
-        # Выбираем записи из StudentInDorm, у которых статус = 'waiting_order'
-        # и dorm_id ещё не назначен.
-        pending_records = StudentInDorm.objects.filter(status='waiting_order', dorm_id__isnull=True)
+        # 1. Берём только те записи StudentInDorm,
+        #    где связанная заявка в status='waiting_order' и dorm ещё не назначен
+        pending_records = StudentInDorm.objects.filter(
+            application_id__status='waiting_order',
+            dorm_id__isnull=True
+        )
         if not pending_records.exists():
             return Response(
                 {"detail": "Нет студентов, ожидающих распределения по общежитиям."},
-                status=status.HTTP_200_OK
+                status=200
             )
 
-        # Группируем записи по стоимости общежития (берём стоимость из заявки)
+        # 2. Группируем записи по стоимости (dormitory_cost берётся из Application)
         cost_to_records = defaultdict(list)
-        for record in pending_records:
-            cost = record.application_id.dormitory_cost
-            cost_to_records[cost].append(record)
+        for rec in pending_records:
+            cost = rec.application_id.dormitory_cost
+            cost_to_records[cost].append(rec)
 
         allocated_students = []
-        global_group_counter = 1  # счетчик для уникальных номеров групп
+        group_counter = 1
 
         with transaction.atomic():
             for cost, records in cost_to_records.items():
-                # Получаем общежития, соответствующие стоимости
+                # выбираем все общежития с этой стоимостью
                 dorms_for_cost = Dorm.objects.filter(cost=cost)
-                if not dorms_for_cost.exists():
+                if not dorms_for_cost:
                     continue
 
-                # Для распределения можно перебрать общежития по очереди
-                # (пример ниже использует первое найденное; при желании можно распределять равномерно)
                 for dorm in dorms_for_cost:
-                    # Формируем список слотов (комнат) согласно настройкам общежития
-                    room_slots = []
-                    room_slots.extend([2] * (dorm.rooms_for_two or 0))
-                    room_slots.extend([3] * (dorm.rooms_for_three or 0))
-                    room_slots.extend([4] * (dorm.rooms_for_four or 0))
-                    if not room_slots:
+                    # собираем список доступных слотов по комнатам
+                    slots = []
+                    slots += [2] * (dorm.rooms_for_two or 0)
+                    slots += [3] * (dorm.rooms_for_three or 0)
+                    slots += [4] * (dorm.rooms_for_four or 0)
+                    if not slots:
                         continue
 
-                    # Отбираем записи для распределения – только те, которые ещё не получили общагу
-                    remaining_records = [rec for rec in records if rec.dorm_id is None]
-                    if not remaining_records:
+                    # оставшиеся неподразмещённые записи
+                    remaining = [r for r in records if r.dorm_id is None]
+                    if not remaining:
                         continue
 
-                    # Разбиваем записи по полу
-                    male_records = [rec for rec in remaining_records if rec.student_id.gender and rec.student_id.gender.upper() == 'M']
-                    female_records = [rec for rec in remaining_records if rec.student_id.gender and rec.student_id.gender.upper() == 'F']
+                    # разделяем по полу
+                    male = [r for r in remaining if r.student_id.gender and r.student_id.gender.upper() == 'M']
+                    female = [r for r in remaining if r.student_id.gender and r.student_id.gender.upper() == 'F']
 
-                    for slot_size in sorted(room_slots):
-                        candidate_pool = None
-                        chosen_gender = None
-                        if len(male_records) >= slot_size and len(female_records) >= slot_size:
-                            if len(male_records) >= len(female_records):
-                                candidate_pool = male_records
-                                chosen_gender = 'M'
-                            else:
-                                candidate_pool = female_records
-                                chosen_gender = 'F'
-                        elif len(male_records) >= slot_size:
-                            candidate_pool = male_records
-                            chosen_gender = 'M'
-                        elif len(female_records) >= slot_size:
-                            candidate_pool = female_records
-                            chosen_gender = 'F'
+                    # пытаемся заполнить каждый слот
+                    for size in sorted(slots):
+                        pool, gender = None, None
+                        if len(male) >= size and len(female) >= size:
+                            pool, gender = (male, 'M') if len(male) >= len(female) else (female, 'F')
+                        elif len(male) >= size:
+                            pool, gender = male, 'M'
+                        elif len(female) >= size:
+                            pool, gender = female, 'F'
                         else:
                             continue
 
-                        allocated_group = self.allocate_slot(candidate_pool, slot_size)
-                        if not allocated_group:
+                        group = self.allocate_slot(pool, size)
+                        if not group:
                             continue
 
-                        for rec in allocated_group:
-                            if chosen_gender == 'M' and rec in male_records:
-                                male_records.remove(rec)
-                            elif chosen_gender == 'F' and rec in female_records:
-                                female_records.remove(rec)
-                            # Назначаем данному студенту выбранное общежитие и группу
+                        for rec in group:
+                            # убираем из пулов выбранных
+                            if gender == 'M':
+                                male.remove(rec)
+                            else:
+                                female.remove(rec)
+
                             rec.dorm_id = dorm
-                            rec.group = str(global_group_counter)
-                            # Статус остаётся "waiting_order"
+                            rec.group = str(group_counter)
+                            rec.save()
+
+                            allocated_students.append({
+                                "student_email": rec.student_id.email,
+                                "dorm_name": dorm.name,
+                                "group": rec.group
+                            })
+                        group_counter += 1
+
+                    # если после основных слотов остались студенты, распределяем их по тем же принципам
+                    for pool in (male, female):
+                        if not pool:
+                            continue
+                        label = str(group_counter)
+                        for rec in pool:
+                            rec.dorm_id = dorm
+                            rec.group = label
                             rec.save()
                             allocated_students.append({
                                 "student_email": rec.student_id.email,
                                 "dorm_name": dorm.name,
                                 "group": rec.group
                             })
-                        global_group_counter += 1
+                        group_counter += 1
 
-                    # Распределяем оставшиеся записи по полу (если есть)
-                    if male_records:
-                        group_label = str(global_group_counter)
-                        global_group_counter += 1
-                        for rec in male_records:
-                            rec.dorm_id = dorm
-                            rec.group = group_label
-                            rec.save()
-                            allocated_students.append({
-                                "student_email": rec.student_id.email,
-                                "dorm_name": dorm.name,
-                                "group": group_label
-                            })
-                    if female_records:
-                        group_label = str(global_group_counter)
-                        global_group_counter += 1
-                        for rec in female_records:
-                            rec.dorm_id = dorm
-                            rec.group = group_label
-                            rec.save()
-                            allocated_students.append({
-                                "student_email": rec.student_id.email,
-                                "dorm_name": dorm.name,
-                                "group": group_label
-                            })
-
-        return Response(
-            {
-                "detail": "Студенты успешно распределены по общежитиям и группам.",
-                "allocated_students": allocated_students
-            },
-            status=status.HTTP_200_OK
-        )
+        return Response({
+            "detail": "Студенты успешно распределены по общежитиям и группам.",
+            "allocated_students": allocated_students
+        }, status=200)
 
     def allocate_slot(self, candidate_pool, slot_size):
         """
-        Функция пытается выделить слот (комнату) требуемого размера из списка записей StudentInDorm.
-        Сначала группирует записи по результату теста (поле test_result заявки)
-        и, желательно, по языковому предпочтению (из test_answers, где 'A' – казахский, 'B' – русский).
-        Если записей меньше, чем slot_size, возвращает None.
+        Пытаемся собрать группу заданного размера:
+        1) Сначала по test_result
+        2) Внутри — по языковому ответу (test_answers)
+        3) Если не получается — берём из самой большой группы и дополняем другими
         """
         if len(candidate_pool) < slot_size:
             return None
 
+        # Группируем по результату теста
         groups = defaultdict(list)
-        for record in candidate_pool:
-            groups[record.application_id.test_result].append(record)
+        for rec in candidate_pool:
+            tr = rec.application_id.test_result
+            groups[tr].append(rec)
 
-        for test_result, recs in groups.items():
+        # Ищём внутри каждой группы подходящую по языку
+        for tr, recs in groups.items():
             if len(recs) >= slot_size:
-                lang_groups = defaultdict(list)
-                for record in recs:
-                    lang = self.get_language_from_record(record)
-                    lang_groups[lang].append(record)
-                for lang in ['A', 'B']:
-                    if lang_groups.get(lang, []) and len(lang_groups[lang]) >= slot_size:
-                        return lang_groups[lang][:slot_size]
+                # группируем по языковому ответу
+                langs = defaultdict(list)
+                for r in recs:
+                    ans = r.application_id.test_answers
+                    lang = self.get_language_from_record(ans)
+                    langs[lang].append(r)
+                # пытаемся по конкретному языку
+                for lang in ('A', 'B'):
+                    if len(langs.get(lang, [])) >= slot_size:
+                        return langs[lang][:slot_size]
+                # иначе просто возвращаем первые slot_size из этой группы
                 return recs[:slot_size]
 
+        # Если ни по одной группе по test_result не сработало,
+        # берём из самой крупной группы и докидываем остальных
         sorted_groups = sorted(groups.items(), key=lambda x: len(x[1]), reverse=True)
-        largest_group_recs = sorted_groups[0][1]
-        allocated = largest_group_recs[:]
+        top_recs = sorted_groups[0][1]
+        allocated = top_recs[:]
         remaining_needed = slot_size - len(allocated)
-        remaining = [record for record in candidate_pool if record not in allocated]
-        if len(remaining) < remaining_needed:
+        rest = [r for r in candidate_pool if r not in allocated]
+        if len(rest) < remaining_needed:
             return None
-        allocated.extend(remaining[:remaining_needed])
-        if len(allocated) == slot_size:
-            return allocated
-        return None
+        allocated.extend(rest[:remaining_needed])
+        return allocated if len(allocated) == slot_size else None
 
-    def get_language_from_record(self, record):
+    def get_language_from_record(self, test_answers):
         """
-        Извлекает языковое предпочтение из поля test_answers заявки.
-        Предполагается, что test_answers хранит JSON-массив, где первый элемент – ответ ('A' – казахский, 'B' – русский, 'C' – оба).
+        Извлекает первый ответ из test_answers:
+        - если строка — парсим JSON
+        - если список — берём первый элемент
         """
         try:
-            answers = record.application_id.test_answers
+            answers = test_answers
             if isinstance(answers, str):
                 answers = json.loads(answers)
-            if isinstance(answers, list) and len(answers) > 0:
+            if isinstance(answers, list) and answers:
                 return answers[0]
-        except Exception as e:
-            return None
+        except Exception:
+            pass
+        return None
 
 
 

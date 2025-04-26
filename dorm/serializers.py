@@ -142,14 +142,11 @@ class EvidenceTypeSerializer(serializers.ModelSerializer):
 
 
 class ApplicationEvidenceSerializer(serializers.ModelSerializer):
-    evidence_type = serializers.SlugRelatedField(
-        slug_field='code',
-        read_only=True
-    )
+    evidence_type_code = serializers.CharField(source='evidence_type.code')
 
     class Meta:
         model = ApplicationEvidence
-        fields = ('id', 'evidence_type', 'file', 'numeric_value', 'approved', 'created_at')
+        fields = ['id', 'evidence_type_code', 'file', 'approved']
 
 
 
