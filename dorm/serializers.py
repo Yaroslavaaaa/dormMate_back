@@ -14,6 +14,52 @@ class StudentSerializer(serializers.ModelSerializer):
 
 
 
+class GlobalSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GlobalSettings
+        fields = ['allow_application_edit']
+
+
+
+class AdminSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, required=False)
+
+    class Meta:
+        model = Admin
+        fields = [
+            'id', 's', 'first_name', 'last_name', 'middle_name',
+            'email', 'birth_date', 'phone_number', 'avatar', 'gender',
+            'is_active', 'is_staff', 'role', 'password',
+        ]
+        read_only_fields = ['id', 'is_staff']
+
+    def validate_s(self, value):
+        if not re.fullmatch(r'F\d{8}', value):
+            raise serializers.ValidationError(
+                'Admin "s" must start with "F" followed by exactly eight digits.'
+            )
+        return value.upper()
+
+    def create(self, validated_data):
+        password = validated_data.pop('password')
+        admin = Admin(**validated_data)
+        admin.set_password(password)
+        admin.is_staff = True
+        admin.save()
+        return admin
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        for attr, val in validated_data.items():
+            setattr(instance, attr, val)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        return instance
+
+
+
+
 class RegionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Region
@@ -133,12 +179,62 @@ class KnowledgeBaseSerializer(serializers.ModelSerializer):
 
 
 class EvidenceTypeSerializer(serializers.ModelSerializer):
-    # Если нужно, можно добавить alias для отображения имени
-    label = serializers.CharField(source='name', read_only=True)
+    # включаем m2m поле
+    keywords = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=Keyword.objects.all()
+    )
 
     class Meta:
         model = EvidenceType
-        fields = ('id', 'code', 'name', 'label', 'priority', 'data_type')
+        fields = [
+            'id',
+            'name',
+            'code',
+            'priority',
+            'data_type',
+            'auto_fill_field',
+            'keywords',
+        ]
+        read_only_fields = ['id']
+
+    def create(self, validated_data):
+        # достаём список ключевых слов
+        kw_list = validated_data.pop('keywords', [])
+        # для дебага — залогируем, что пришло:
+        print(">> EvidenceType.create(), keywords payload:", kw_list)
+
+        # создаём сам тип доказательства
+        evidence = EvidenceType.objects.create(**validated_data)
+
+        # явно создаём записи в промежуточной таблице
+        for kw in kw_list:
+            EvidenceKeyword.objects.create(
+                evidence_type=evidence,
+                keyword=kw
+            )
+        return evidence
+
+    def update(self, instance, validated_data):
+        kw_list = validated_data.pop('keywords', None)
+        print(">> EvidenceType.update(), keywords payload:", kw_list)
+
+        # обновляем простые поля
+        for attr, val in validated_data.items():
+            setattr(instance, attr, val)
+        instance.save()
+
+        # если пришли ключевые слова — перезапишем m2m
+        if kw_list is not None:
+            # сначала удалим старые связи
+            EvidenceKeyword.objects.filter(evidence_type=instance).delete()
+            # и создадим новые
+            for kw in kw_list:
+                EvidenceKeyword.objects.create(
+                    evidence_type=instance,
+                    keyword=kw
+                )
+        return instance
 
 
 class ApplicationEvidenceSerializer(serializers.ModelSerializer):
@@ -155,6 +251,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
     student = StudentSerializer(read_only=True)
     evidences = ApplicationEvidenceSerializer(many=True, required=False)
     score = serializers.SerializerMethodField(read_only=True)
+    gpa = serializers.SerializerMethodField()
 
     class Meta:
         model = Application
@@ -173,8 +270,14 @@ class ApplicationSerializer(serializers.ModelSerializer):
             'score',
             'created_at',
             'updated_at',
+            'gpa'
         )
 
+    def get_gpa(self, obj):
+        # obj - это instance Application
+        if obj.student:
+            return obj.student.gpa
+        return None
     def get_score(self, obj):
         try:
             return calculate_application_score(obj)
@@ -222,3 +325,10 @@ class StudentInDormSerializer(serializers.ModelSerializer):
             'order',
             'room'
         ]
+
+
+class KeywordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Keyword
+        fields = ['id', 'keyword']
+        read_only_fields = ['id']

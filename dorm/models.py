@@ -45,6 +45,10 @@ class UserManager(BaseUserManager):
 
         return self.create_user(s, password, **extra_fields)
 
+
+def avatar_upload_path(instance, filename):
+    return f'avatar/{instance.s}_{filename}'
+
 class User(AbstractBaseUser, PermissionsMixin):
     GENDER_CHOICES = [
         ('M', 'Male'),
@@ -58,7 +62,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(blank=True)
     birth_date = models.DateField(verbose_name="Дата рождения", blank=True, null=True)
     phone_number = models.CharField(max_length=11, blank=True, null=True)
-    avatar = models.ImageField(blank=True, default='avatar/no-avatar.png')
+    avatar = models.ImageField(upload_to=avatar_upload_path, default='avatar/no-avatar.png')
     gender = models.CharField(
         max_length=1,
         choices=GENDER_CHOICES,
@@ -87,6 +91,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 class Student(User):
     course = models.CharField(max_length=100)
     region = models.ForeignKey('Region', on_delete=models.CASCADE, verbose_name="Область")
+    gpa = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True, verbose_name="GPA")
 
     class Meta:
         verbose_name = 'Student'
@@ -99,7 +104,22 @@ class Student(User):
         super().save(*args, **kwargs)
 
 class Admin(User):
-    department = models.CharField(max_length=100)
+    ROLE_SUPER = 'SUPER'
+    ROLE_OPERATOR = 'OP'
+    ROLE_REQUEST = 'REQ'
+
+    ROLE_CHOICES = [
+        (ROLE_SUPER, 'Главный администратор'),
+        (ROLE_OPERATOR, 'Оператор'),
+        (ROLE_REQUEST, 'Администратор по работе с заявками'),
+    ]
+
+    role = models.CharField(
+        max_length=10,
+        choices=ROLE_CHOICES,
+        verbose_name="Роль администратора",
+        default=ROLE_OPERATOR
+    )
 
     class Meta:
         verbose_name = 'Admin'
@@ -111,7 +131,8 @@ class Admin(User):
     def save(self, *args, **kwargs):
         if not re.fullmatch(r"F\d{8}", self.s):
             raise ValueError(
-                'Admin "s" must start with "F" followed by exactly eight digits, making it 9 characters long.')
+                'Admin "s" must start with "F" followed by exactly eight digits, making it 9 characters long.'
+            )
         super().save(*args, **kwargs)
 
 
@@ -185,7 +206,7 @@ class EvidenceType(models.Model):
         verbose_name="Поле автозаполнения"
     )
     # ManyToManyField через промежуточную модель EvidenceKeyword
-    keywords = models.ManyToManyField('Keyword', through='EvidenceKeyword', blank=True, verbose_name="Ключевые слова")
+    keywords = models.ManyToManyField('Keyword', through='EvidenceKeyword', blank=True, null=True, verbose_name="Ключевые слова")
 
     def __str__(self):
         return self.code
@@ -236,10 +257,11 @@ class Application(models.Model):
     test_result = models.CharField(max_length=1, null=True, blank=True, verbose_name="Результат теста")
     payment_screenshot = models.FileField(upload_to='payments/', null=True, blank=True, verbose_name="Скрин оплаты")
     is_full_payment = models.BooleanField(null=True, blank=True, verbose_name="Полная оплата")
+    parent_phone = models.CharField(max_length=20, null=True, blank=True, verbose_name="Телефон родителей")
+
 
     # Поля для ЕНТ и GPA остаются в модели
     ent_result = models.PositiveIntegerField(null=True, blank=True, verbose_name="Результат ЕНТ")
-    gpa = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True, verbose_name="GPA")
 
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Время создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Время последнего обновления")
@@ -319,7 +341,7 @@ class QuestionAnswer(models.Model):
 class StudentInDorm(models.Model):
     student_id = models.ForeignKey(Student, on_delete=models.CASCADE, verbose_name="student", related_name="Студент")
     dorm_id = models.ForeignKey(Dorm, on_delete=models.CASCADE, verbose_name="dorm", related_name="Общежитие", null=True)
-    group = models.IntegerField(max_length=10, null=True, blank=True, verbose_name="Группа")
+    group = models.IntegerField(null=True, blank=True, verbose_name="Группа")
     application_id = models.ForeignKey(Application, on_delete=models.CASCADE, verbose_name="application", related_name="Заявление")
     order = models.ImageField(upload_to='orders/', null=True, blank=True, verbose_name="Ордер")
     room = models.CharField(max_length=10, null=True, blank=True, verbose_name="Комната")
@@ -335,4 +357,29 @@ class KnowledgeBase(models.Model):
 
     def __str__(self):
         return self.question_keywords[:50]
+
+
+
+
+
+class GlobalSettings(models.Model):
+    # Единственный экземпляр в БД — singleton
+    allow_application_edit = models.BooleanField(
+        default=False,
+        verbose_name="Студентам разрешено редактировать заявки"
+    )
+
+    def save(self, *args, **kwargs):
+        # Принудительно всегда сохраняем только одну запись с pk=1
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def get_solo(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    class Meta:
+        verbose_name = "Глобальная настройка"
+        verbose_name_plural = "Глобальные настройки"
 

@@ -72,15 +72,77 @@ class ApplicationViewSet(generics.ListAPIView):
     serializer_class = ApplicationSerializer
 
 
+class IsAdmin(IsAuthenticated):
+    def has_permission(self, request, view):
+        is_authenticated = super().has_permission(request, view)
+        return is_authenticated and (hasattr(request.user, 'admin') or request.user.is_superuser)
+
+
+
+class IsAuthenticatedAdmin(permissions.IsAuthenticated):
+    def has_permission(self, request, view):
+        if not super().has_permission(request, view):
+            return False
+        # request.user.admin будет существовать только для Admin-пользователей
+        return hasattr(request.user, 'admin') or request.user.is_superuser
+
+
+class IsSuperAdmin(IsAuthenticatedAdmin):
+    def has_permission(self, request, view):
+        if not super().has_permission(request, view):
+            return False
+
+        # Если это встроенный суперпользователь Django — даём доступ
+        if request.user.is_superuser:
+            return True
+
+        # Иначе проверяем роль в своей модели Admin
+        return (
+            hasattr(request.user, 'admin')
+            and request.user.admin.role == Admin.ROLE_SUPER
+        )
+
+
+class IsOperator(IsAuthenticatedAdmin):
+    def has_permission(self, request, view):
+        if not super().has_permission(request, view):
+            return False
+
+        # Главный админ (ROLE_SUPER) должен тоже иметь доступ к любым операциям оператора
+        if hasattr(request.user, 'admin') and request.user.admin.role == Admin.ROLE_SUPER:
+            return True
+
+        return (
+            hasattr(request.user, 'admin')
+            and request.user.admin.role == Admin.ROLE_OPERATOR
+        )
+
+
+class IsRequestAdmin(IsAuthenticatedAdmin):
+
+    def has_permission(self, request, view):
+        if not super().has_permission(request, view):
+            return False
+
+        # Главный админ и оператор тоже могут работать с заявками
+        if hasattr(request.user, 'admin') and request.user.admin.role in {
+            Admin.ROLE_SUPER, Admin.ROLE_OPERATOR
+        }:
+            return True
+
+        return (
+            hasattr(request.user, 'admin')
+            and request.user.admin.role == Admin.ROLE_REQUEST
+        )
+
+
+
 class KnowledgeBaseListView(generics.ListAPIView):
     queryset = KnowledgeBase.objects.all()
     serializer_class = KnowledgeBaseSerializer
     permission_classes = [permissions.IsAdminUser]
 
-class IsAdmin(IsAuthenticated):
-    def has_permission(self, request, view):
-        is_authenticated = super().has_permission(request, view)
-        return is_authenticated and (hasattr(request.user, 'admin') or request.user.is_superuser)
+
 
 
 class IsStudentOrAdmin(IsAuthenticated):
@@ -139,6 +201,26 @@ class ApplicationDetailView(RetrieveUpdateAPIView):
         ]
 
         return Response(serialized_data)
+
+
+
+
+
+
+class UserApplicationView(APIView):
+    permission_classes = [IsAuthenticated]  # Только для авторизованных пользователей
+
+    def get(self, request):
+        try:
+            # Предполагается, что у тебя есть связь OneToOne или ForeignKey между user и заявкой
+            application = Application.objects.get(student__user=request.user)
+            serializer = ApplicationSerializer(application)
+            return Response(serializer.data)
+        except Application.DoesNotExist:
+            return Response({"detail": "Заявка не найдена."}, status=status.HTTP_404_NOT_FOUND)
+
+
+
 
 
 
@@ -260,6 +342,55 @@ class IsStudent(IsAuthenticated):
         return is_authenticated and hasattr(request.user, 'student')
 
 
+
+
+class KeywordViewSet(viewsets.ModelViewSet):
+
+    queryset = Keyword.objects.all()
+    serializer_class = KeywordSerializer
+    permission_classes = [IsAdmin]
+
+
+class EvidenceTypeViewSet(viewsets.ModelViewSet):
+    queryset = EvidenceType.objects.all().order_by('-priority')
+    serializer_class = EvidenceTypeSerializer
+
+    def get_permissions(self):
+        if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return []
+        return [IsAdmin()]
+
+
+
+class MyAdminRoleAPIView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        user = request.user
+
+        if user.is_superuser:
+            role_code = Admin.ROLE_SUPER
+            role_label = dict(Admin.ROLE_CHOICES)[role_code]
+            return Response({'role': role_code, 'label': role_label})
+
+        try:
+            admin_obj = user.admin
+        except Admin.DoesNotExist:
+            return Response(
+                {'detail': 'У вас нет прав администратора.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        role_code = admin_obj.role
+
+        if role_code == Admin.ROLE_SUPER:
+            role_label = dict(Admin.ROLE_CHOICES)[Admin.ROLE_SUPER]
+            return Response({'role': Admin.ROLE_SUPER, 'label': role_label})
+
+        role_label = dict(Admin.ROLE_CHOICES).get(role_code, 'Неизвестная роль')
+        return Response({'role': role_code, 'label': role_label})
+
+
 class DormCostListView(APIView):
     def get(self, request):
         costs = Dorm.objects.values_list('cost', flat=True).distinct()
@@ -304,53 +435,72 @@ class CreateApplicationView(APIView):
         except Student.DoesNotExist:
             return Response({"error": "Студент с таким ID не найден"}, status=status.HTTP_400_BAD_REQUEST)
 
-        evidences_files = request.FILES
-        # Проверка MIME-типа каждого файла
-        for key in evidences_files:
-            file = evidences_files.get(key)
-            if file and file.content_type != 'application/pdf':
-                return Response(
-                    {"error": f"Файл в поле '{key}' должен быть формата PDF."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
         serializer = ApplicationSerializer(data=request.data)
         if serializer.is_valid():
             try:
                 with transaction.atomic():
                     application = serializer.save(student=student, dormitory_cost=dormitory_cost)
-                    for key, file in request.FILES.items():
+
+                    # --- Работа с файлами справок ---
+                    evidences_files = request.FILES
+                    for key, file in evidences_files.items():
                         try:
                             evidence_type = EvidenceType.objects.get(code=key)
                         except EvidenceType.DoesNotExist:
-                            continue  # Если evidence type не найден, пропускаем
+                            continue  # Пропускаем неизвестные поля
 
-                        # Извлекаем текст из PDF-файла
+                        # Проверка MIME-типа
+                        if file.content_type != 'application/pdf':
+                            raise ValidationError(f"Файл в поле '{key}' должен быть формата PDF.")
+
+                        # Извлечение текста из файла
                         extracted_text = extract_text_from_pdf(file)
-                        # Сброс указателя файла для корректного сохранения
                         file.seek(0)
+
+                        # Проверка ключевых слов
                         keywords = evidence_type.keywords.all()
-                        # Если для типа справки заданы ключевые слова, проверяем их наличие в тексте
                         if keywords and not any(
-                            keyword.keyword.lower() in extracted_text.lower() for keyword in keywords
+                            keyword.keyword.lower() in extracted_text.lower()
+                            for keyword in keywords
                         ):
                             raise ValidationError(
                                 f"Загруженный файл для '{evidence_type.name}' не содержит необходимых ключевых слов."
                             )
 
+                        # Создание ApplicationEvidence для файла
                         ApplicationEvidence.objects.create(
                             application=application,
                             evidence_type=evidence_type,
                             file=file
                         )
+
+                    # --- Работа с авто-заполнением из Student ---
+                    evidence_types_with_auto_fill = EvidenceType.objects.exclude(auto_fill_field__isnull=True).exclude(auto_fill_field='')
+
+                    for evidence_type in evidence_types_with_auto_fill:
+                        auto_field = evidence_type.auto_fill_field
+                        student_value = getattr(student, auto_field, None)
+
+                        if student_value is not None:
+                            if evidence_type.data_type == 'numeric':
+                                ApplicationEvidence.objects.create(
+                                    application=application,
+                                    evidence_type=evidence_type,
+                                    numeric_value=student_value
+                                )
+                            elif evidence_type.data_type == 'file':
+                                # Можно расширить под автозаполнение файлами, если потребуется
+                                pass
+
                 return Response(
                     {"message": "Заявка создана", "application_id": application.id},
                     status=status.HTTP_201_CREATED
                 )
             except ValidationError as e:
-                # Откат транзакции произойдет автоматически при выбросе исключения
                 return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 
 
@@ -417,10 +567,12 @@ class ApplicationStatusView(APIView):
         if application.status == 'awaiting_order':
             return Response({"status": "Ваша заявка принята, ожидайте ордер на заселение."}, status=status.HTTP_200_OK)
 
-        dormitory_name = application.dormitory_choice.name if application.dormitory_choice else "общага"
+        student_in_dorm = StudentInDorm.objects.filter(application_id=application.id).first()
+        dormitory_name = student_in_dorm.dorm_id
+        room = student_in_dorm.room
 
         if application.status == 'order':
-            return Response({"status": f"Поздравляем! Вам выдан ордер в общагу: {dormitory_name}."}, status=status.HTTP_200_OK)
+            return Response({"status": f"Поздравляем! Вам выдан ордер в общежитие: {dormitory_name}, комната {room}"}, status=status.HTTP_200_OK)
 
         return Response({"error": "Неизвестный статус заявки"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1261,11 +1413,35 @@ class ChangePasswordView(APIView):
         return Response({"message": "Password successfully updated."}, status=status.HTTP_200_OK)
 
 
+class IsAdminOrOwnerAndEditable(permissions.BasePermission):
 
-class ApplicationViewSet(generics.ListAPIView):
-        queryset = Application.objects.all()
-        serializer_class = ApplicationSerializer
-        permission_classes = [IsAdmin]
+    def has_object_permission(self, request, view, obj):
+        # 1) Админ → полный доступ
+        if request.user.is_staff:
+            return True
+
+        # 2) Чтение → только владелец
+        if request.method in permissions.SAFE_METHODS:
+            return hasattr(request.user, 'student') and obj.student == request.user.student
+
+        # 3) Изменение → глобальный флаг + владелец
+        settings = GlobalSettings.get_solo()
+        is_owner = hasattr(request.user, 'student') and obj.student == request.user.student
+        return settings.allow_application_edit and is_owner
+
+
+
+class ApplicationViewSet(APIView):
+    queryset = Application.objects.all()
+    serializer_class = ApplicationSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return Application.objects.all()
+        return Application.objects.filter(student=user.student)
+
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrOwnerAndEditable]
 
 class ApproveStudentApplicationAPIView(APIView):
         permission_classes = [IsAdmin]
@@ -1435,6 +1611,28 @@ class DormImageViewSet(viewsets.ModelViewSet):
             raise ValidationError("Поле 'dorm' обязательно для заполнения.")
 
 
+
+
+
+
+class GlobalSettingsAPIView(APIView):
+    def get_permissions(self):
+        if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return []
+        return [IsAdmin()]
+
+    def get(self, request):
+        settings = GlobalSettings.get_solo()
+        return Response(GlobalSettingsSerializer(settings).data)
+
+    def post(self, request):
+        settings = GlobalSettings.get_solo()
+        serializer = GlobalSettingsSerializer(settings, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
 class StudentsViewSet(viewsets.ModelViewSet):
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
@@ -1449,6 +1647,33 @@ class StudentsViewSet(viewsets.ModelViewSet):
 
 
 
+class AvatarUploadView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        student = request.user.student
+        avatar = request.FILES.get('avatar')
+
+        if not avatar:
+            return Response({'error': 'Файл не выбран'}, status=status.HTTP_400_BAD_REQUEST)
+
+        student.avatar = avatar
+        student.save()
+
+        return Response({'message': 'Аватар успешно обновлен.', 'avatar_url': student.avatar.url}, status=status.HTTP_200_OK)
+
+
+
+
+
+class AdminViewSet(viewsets.ModelViewSet):
+    queryset = Admin.objects.all()
+    serializer_class = AdminSerializer
+    permission_classes = [IsAdmin]
+
+
+
+
 
 
 class ApplicationListView(ListAPIView):
@@ -1456,77 +1681,6 @@ class ApplicationListView(ListAPIView):
 
     def get_queryset(self):
         queryset = Application.objects.select_related('student')
-        ordering = self.request.query_params.get('ordering', 'priority')
-
-        if ordering == 'gpa':
-            queryset = queryset.annotate(
-                sort_key=Case(
-                    When(student__course="1", then=F('ent_result')),
-                    default=F('gpa'),
-                    output_field=IntegerField()
-                )
-            ).order_by(
-                Case(When(student__course="1", then=Value(1)), default=Value(0)).asc(),
-                F('sort_key').desc()
-            )
-
-        elif ordering == 'ent':
-            queryset = queryset.annotate(
-                sort_key=Case(
-                    When(student__course="1", then=F('ent_result')),
-                    default=F('gpa'),
-                    output_field=IntegerField()
-                )
-            ).order_by(
-                Case(When(student__course="1", then=Value(0)), default=Value(1)),
-                F('sort_key').desc()
-            )
-
-        else:  # Default sorting by priority
-            queryset = queryset.annotate(
-                orphan=Case(
-                    When(orphan_certificate__isnull=False, then=Value(True)),
-                    When(disability_1_2_certificate__isnull=False, then=Value(True)),
-                    default=Value(False),
-                    output_field=BooleanField()
-                ),
-                social=Case(
-                    When(disability_3_certificate__isnull=False, then=Value(True)),
-                    When(parents_disability_certificate__isnull=False, then=Value(True)),
-                    When(loss_of_breadwinner_certificate__isnull=False, then=Value(True)),
-                    When(social_aid_certificate__isnull=False, then=Value(True)),
-                    default=Value(False),
-                    output_field=BooleanField()
-                ),
-                mangilik=Case(
-                    When(mangilik_el_certificate__isnull=False, then=Value(True)),
-                    default=Value(False),
-                    output_field=BooleanField()
-                ),
-                olympiad=Case(
-                    When(student__course="1", olympiad_winner_certificate__isnull=False, then=Value(1)),
-                    default=Value(0),
-                    output_field=IntegerField()
-                ),
-                ent_result_value=Case(
-                    When(student__course="1", then=F('ent_result')),
-                    default=Value(0),
-                    output_field=IntegerField()
-                ),
-                gpa_value=Case(
-                    When(student__course__gt="1", then=F('gpa')),
-                    default=Value(0),
-                    output_field=IntegerField()
-                )
-            ).order_by(
-                '-orphan',
-                '-social',
-                '-mangilik',
-                '-olympiad',
-                '-ent_result_value',
-                '-gpa_value',
-                'id'
-            )
 
         return queryset
 
@@ -1538,14 +1692,7 @@ class AssignRoomAPIView(APIView):
     permission_classes = [IsAdmin]  # или ваш кастомный IsAdmin
 
     def post(self, request, *args, **kwargs):
-        """
-        Ожидается, что фронтенд отправит JSON-объект вида:
-        {
-            "student_ids": [1, 3, 5],
-            "room": "101A"
-        }
-        Вьюшка обновит поле room для записей StudentInDorm с указанными id.
-        """
+
         student_ids = request.data.get("student_ids")
         room_number = request.data.get("room")
 
@@ -1576,42 +1723,22 @@ class AssignRoomAPIView(APIView):
 
 
 class StudentApplicationUpdateView(APIView):
-    """
-    Вьюшка для обновления заявки студентом.
-    Студент может менять только dormitory_cost и добавлять/удалять свои справки.
-    ID заявки берется из авторизованного пользователя (через request.user.application).
-
-    Ожидаемый формат запроса (JSON или multipart, если передаются файлы):
-    {
-       "dormitory_cost": 1234,  # Опционально – новая цена проживания
-       "add_evidences": [
-            {
-                "evidence_type": <evidence_type_id>,
-                # если файл передается, его обработку нужно реализовать через multipart,
-                # либо передавать URL/данные файла – здесь пример без файла:
-                "numeric_value": 95.5
-            },
-            ... // можно добавить несколько справок
-       ],
-       "delete_evidences": [3, 5]  # Список id справок, которые нужно удалить
-    }
-    """
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
         """Получение данных заявки студента."""
         try:
-            application = request.user.application
-        except Application.DoesNotExist:
+            application = request.user.student.application
+        except (Student.DoesNotExist, Application.DoesNotExist):
             return Response({"detail": "Заявка не найдена."}, status=status.HTTP_404_NOT_FOUND)
+
         serializer = ApplicationSerializer(application, context={'request': request})
         return Response(serializer.data)
 
     def patch(self, request, *args, **kwargs):
-
         try:
-            application = request.user.application
-        except Application.DoesNotExist:
+            application = request.user.student.application
+        except (Student.DoesNotExist, Application.DoesNotExist):
             return Response({"detail": "Заявка не найдена."}, status=status.HTTP_404_NOT_FOUND)
 
         data = request.data
@@ -1649,3 +1776,4 @@ class StudentApplicationUpdateView(APIView):
             "added_evidences": added_evidences,
             "deleted_evidences": deleted_ids,
         }, status=status.HTTP_200_OK)
+

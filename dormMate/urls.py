@@ -12,6 +12,9 @@ router = DefaultRouter()
 router.register(r'dorms', DormsViewSet, basename='dorm')
 router.register(r'students', StudentsViewSet, basename='students')
 router.register(r'dorm-images', DormImageViewSet, basename='dorm-images')
+router.register(r'admins', AdminViewSet, basename='admin')
+router.register(r'keywords', KeywordViewSet, basename='keyword')
+router.register(r'evidence-types', EvidenceTypeViewSet, basename='evidencetype')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -48,6 +51,7 @@ urlpatterns = [
     path('api/v1/', include(router.urls)),
     path('api/v1/applications/', ApplicationListView.as_view(), name='application-list'),
     path('api/v1/regions/', RegionListView.as_view(), name='region-list'),
+    path('ap1/v1/application/', UserApplicationView.as_view(), name='application'),
 
     path('knowledge/', KnowledgeBaseListView.as_view(), name='knowledge-base'),
 
@@ -74,6 +78,9 @@ urlpatterns = [
     path('api/v1/payment-confirmation/', PaymentConfirmationAPIView.as_view(), name='payment-confirmation'),
     path('api/v1/assign-room/', AssignRoomAPIView.as_view(), name='assign_room'),
     path('api/v1/student/application/', StudentApplicationUpdateView.as_view(), name='student-application-update'),
+    path('api/v1/global-settings/', GlobalSettingsAPIView.as_view(), name='global-settings'),
+    path('api/v1/my-admin-role/', MyAdminRoleAPIView.as_view(), name='my-admin-role'),
+    path('api/v1/upload-avatar/', AvatarUploadView.as_view(), name='upload-avatar'),
 
 
 ]

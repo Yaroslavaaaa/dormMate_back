@@ -131,3 +131,24 @@ class NotificationAdmin(admin.ModelAdmin):
 class KnowledgeBaseAdmin(admin.ModelAdmin):
     list_display = ('question_keywords', 'answer')
     search_fields = ('question_keywords', 'answer')
+
+
+
+
+@admin.register(GlobalSettings)
+class GlobalSettingsAdmin(admin.ModelAdmin):
+    list_display = ('id', 'allow_application_edit')
+    list_editable = ('allow_application_edit',)
+    list_display_links = ('id',)
+    fieldsets = (
+        (None, {
+            'fields': ('allow_application_edit',),
+            'description': 'Глобальная настройка: разрешить ли студентам редактировать заявки'
+        }),
+    )
+
+    # def has_add_permission(self, request):
+    #     return False
+    #
+    # def has_delete_permission(self, request, obj=None):
+    #     return False
