@@ -1,14 +1,16 @@
-from dorm.models import EvidenceType
-from django.core.mail import send_mail
-from django.conf import settings
-from sentence_transformers import SentenceTransformer
+# dorm/utils.py
+
 import re
-from dorm.ai.phi3_helper import ask_phi3
-
+import torch
+from pathlib import Path
+from django.conf import settings
+from django.core.mail import send_mail
+from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+from .ai_model import generate_answer_from_model  # наш локальный AI
+from dorm.models import EvidenceType, KnowledgeBase
 
-
-
+# 📬 Email-уведомление
 def send_email_notification(email, message):
     send_mail(
         subject="Уведомление от системы",
@@ -18,111 +20,90 @@ def send_email_notification(email, message):
         fail_silently=False,
     )
 
-
-
+# 📊 Подсчёт баллов заявки (пример)
 def calculate_application_score(application):
     score = 0
-    # Собираем одобренные доказательства в словарь (ключ – код EvidenceType)
-    evidences = {
-        e.evidence_type.code: e
-        for e in application.evidences.filter(approved=True)
-    }
-
+    evidences = {e.evidence_type.code: e for e in application.evidences.filter(approved=True)}
     for et in EvidenceType.objects.all():
-        if et.code == 'gpa':
-            if application.student.course != '1':
-                evidence = evidences.get('gpa')
-                if evidence and evidence.numeric_value is not None:
-                    score += et.priority * float(evidence.numeric_value)
-                elif application.gpa is not None:
-                    score += et.priority * float(application.gpa)
-        elif et.code == 'ent_result':
-            if application.student.course == '1':
-                evidence = evidences.get('ent_result')
-                if evidence and evidence.numeric_value is not None:
-                    score += et.priority * float(evidence.numeric_value)
-                elif application.ent_result is not None:
-                    score += et.priority * float(application.ent_result)
+        if et.code == 'gpa' and application.student.course != '1':
+            ev = evidences.get('gpa')
+            val = ev.numeric_value if ev and ev.numeric_value is not None else application.gpa
+            if val is not None:
+                score += et.priority * float(val)
+        elif et.code == 'ent_result' and application.student.course == '1':
+            ev = evidences.get('ent_result')
+            val = ev.numeric_value if ev and ev.numeric_value is not None else application.ent_result
+            if val is not None:
+                score += et.priority * float(val)
         else:
-            evidence = evidences.get(et.code)
-            if et.data_type == 'file':
-                if evidence and evidence.file:
-                    score += et.priority
+            ev = evidences.get(et.code)
+            if et.data_type == 'file' and ev and ev.file:
+                score += et.priority
             elif et.data_type == 'numeric':
-                if evidence and evidence.numeric_value is not None:
-                    score += et.priority * float(evidence.numeric_value)
-                elif et.auto_fill_field:
-                    auto_value = (
-                            getattr(application, et.auto_fill_field, None) or
-                            getattr(application.student, et.auto_fill_field, None)
-                    )
-                    if auto_value is not None:
-                        score += et.priority * float(auto_value)
+                val = (
+                    ev.numeric_value if ev and ev.numeric_value is not None
+                    else getattr(application, et.auto_fill_field, None)
+                    or getattr(application.student, et.auto_fill_field, None)
+                )
+                if val is not None:
+                    score += et.priority * float(val)
     return score
 
+# 🧠 Векторная модель для семантики
+vector_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-model = SentenceTransformer('all-MiniLM-L6-v2')
-
-# Функция для поиска номера общежития в вопросе
-def extract_dorm_number(text):
-    match = re.search(r'общежитие\s*№?\s*(\d+)', text)
-    if match:
-        return match.group(1)
-    return None
-
-# Функция для распознавания эмоций
-def detect_emotion(question):
-    emotions_keywords = {
-        "боюсь": "Понимаю ваше волнение. Всё решаемо — советую обратиться к куратору или в деканат, они обязательно помогут.",
-        "страшно": "Понимаю ваше волнение. Всё решаемо — советую обратиться к куратору или в деканат, они обязательно помогут.",
-        "переживаю": "Понимаю ваше волнение. Всё решаемо — советую обратиться к куратору или в деканат, они обязательно помогут.",
-        "не дали общагу": "Не переживайте! Обратитесь в отдел студенческого проживания для дополнительной консультации.",
-        "не получил место": "Не переживайте! Обратитесь в отдел студенческого проживания для дополнительной консультации.",
-        "что дальше делать": "Вы можете подать апелляцию или обратиться в приёмную комиссию для повторной консультации.",
-        "что теперь": "Вы можете подать апелляцию или обратиться в приёмную комиссию для повторной консультации.",
-        "тупой": "Мне жаль, что вы расстроены. Давайте попробуем найти решение вместе.",
-        "плохой бот": "Мне жаль, что вы расстроены. Давайте попробуем найти решение вместе.",
+# 😟 Эмоциональный фильтр
+def detect_emotion(q: str) -> str | None:
+    mapping = {
+        "боюсь": "Понимаю ваше волнение — советую обратиться к деканату.",
+        "страшно": "Всё решаемо — напишите в приёмную комиссию.",
+        "переживаю": "Не волнуйтесь, мы поможем!",
+        "не дали общагу": "Обратитесь в отдел студенческого проживания.",
+        "что дальше делать": "Можно подать апелляцию или уточнить статус заявки.",
+        "плохой бот": "Мне жаль, давайте попробуем снова.",
     }
-    for key, response in emotions_keywords.items():
-        if key in question.lower():
-            return response
+    text = q.lower()
+    for k, resp in mapping.items():
+        if k in text:
+            return resp
     return None
 
-# Основная функция поиска ответа
-def find_best_answer(question):
-    # Сначала определяем эмоцию
-    emotion_answer = detect_emotion(question)
-    if emotion_answer:
-        return emotion_answer
+# 🏠 Вычленение номера общежития
+def extract_dorm_number(text: str) -> str | None:
+    m = re.search(r"общежитие\s*№?\s*(\d+)", text, re.IGNORECASE)
+    return m.group(1) if m else None
 
-    from dorm.models import KnowledgeBase
+# 🎯 Основная функция ответа
+def find_best_answer(question: str) -> str:
+    ql = question.strip()
+    # 1) эмоции
+    emo = detect_emotion(ql)
+    if emo:
+        return emo
+
+    # 2) База знаний
     entries = KnowledgeBase.objects.all()
-    question_lower = question.lower()
+    num = extract_dorm_number(ql)
+    if num:
+        for e in entries:
+            if num in e.question_keywords:
+                return e.answer
 
-    # Поиск по номеру общежития
-    number = extract_dorm_number(question_lower)
-    if number:
-        for entry in entries:
-            if number in entry.question_keywords:
-                return entry.answer
+    # 3) точное вхождение
+    for e in entries:
+        if e.question_keywords.lower() in ql.lower():
+            return e.answer
 
-    # Прямое вхождение
-    for entry in entries:
-        if entry.question_keywords.lower() in question_lower:
-            return entry.answer
+    # 4) векторный поиск
+    uv = vector_model.encode([ql])
+    best, score = "", 0.0
+    for e in entries:
+        ev = vector_model.encode([e.question_keywords])
+        s = cosine_similarity(uv, ev)[0][0]
+        if s > score:
+            score, best = s, e.answer
+    if score >= 0.5:
+        return best
 
-    # Векторное сравнение
-    user_vector = model.encode([question])
-    best_answer = ""
-    best_score = 0.0
-    for entry in entries:
-        entry_vector = model.encode([entry.question_keywords])
-        score = cosine_similarity(user_vector, entry_vector)[0][0]
-        if score > best_score:
-            best_score = score
-            best_answer = entry.answer
-
-    if best_score < 0.5:
-        return None  # если очень плохое совпадение — звать оператора
-
-    return best_answer
+    # 5) если ничего не подошло — AI
+    return generate_answer_from_model(ql)
