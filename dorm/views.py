@@ -32,6 +32,7 @@ from django.db.models import Sum
 from django.db import transaction
 from collections import defaultdict
 import json
+from .ai_model import generate_answer_from_model
 
 from rest_framework.permissions import BasePermission
 import PyPDF2
@@ -736,66 +737,34 @@ class SendMessageView(APIView):
 
     def post(self, request, chat_id):
         chat = get_object_or_404(Chat, id=chat_id, is_active=True)
-        text = request.data.get('text')
+        text = request.data.get("text", "").strip()
         if not text:
             return Response({"error": "Сообщение не может быть пустым"}, status=status.HTTP_400_BAD_REQUEST)
 
-        sender = request.user
+        sender   = request.user
         receiver = chat.student if sender.is_staff else User.objects.filter(is_staff=True).first()
 
-        # Сохраняем сообщение от студента или админа
         Message.objects.create(chat=chat, sender=sender, receiver=receiver, content=text)
 
-        # Если сообщение от студента — подключаем бота
         if not sender.is_staff:
-            ai_answer = find_best_answer(text)
-
-            if ai_answer:
-                bot_user, _ = User.objects.get_or_create(
-                    s="F22016183",
-                    defaults={
-                        "first_name": "DormMateBot",
-                        "is_staff": True,
-                        "is_active": True,
-                        "password": "pbkdf2_sha256$260000$fakebotpassword$fakehashedpassword"  # можно указать любой
-                    }
+            ai_ans = find_best_answer(text)
+            if ai_ans:
+                bot, _ = User.objects.get_or_create(
+                    username="F22016183",
+                    defaults={"first_name":"DormMateBot","is_staff":True,"is_active":True,"password":"!"}
                 )
-                Message.objects.create(
-                    chat=chat,
-                    sender=bot_user,
-                    receiver=sender,
-                    content=ai_answer
-                )
-                return Response({"status": "Ответ сгенерирован ботом"}, status=status.HTTP_201_CREATED)
+                Message.objects.create(chat=chat, sender=bot, receiver=sender, content=ai_ans)
+                return Response({"status":"Ответ сгенерирован ботом"}, status=status.HTTP_201_CREATED)
             else:
-                # Если бот не нашёл ответ
+                # уведомить админа
                 admin = User.objects.filter(is_staff=True).first()
+                Notification.objects.create(recipient=admin, message=f"Нужна помощь в чате #{chat.id}")
+                system_user,_=User.objects.get_or_create(username="SYSTEM", defaults={"first_name":"System","is_staff":True,"is_active":True,"password":"!"})
+                Message.objects.create(chat=chat, sender=system_user, receiver=sender,
+                                       content="Сложный вопрос — оператор скоро подключится.")
+                return Response({"status":"Ожидаем помощь оператора"}, status=status.HTTP_200_OK)
 
-                Notification.objects.create(
-                    recipient=admin,
-                    message=f"Новый вопрос в чате #{chat.id}, требуется участие оператора."
-                )
-
-                system_user, _ = User.objects.get_or_create(
-                    s="SYSTEM",
-                    defaults={
-                        "first_name": "System",
-                        "is_staff": True,
-                        "is_active": True,
-                        "password": "pbkdf2_sha256$260000$systempassword$fakehashedsystempassword"
-                    }
-                )
-
-                Message.objects.create(
-                    chat=chat,
-                    sender=system_user,
-                    receiver=sender,
-                    content="Ваш вопрос сложный! Оператор скоро подключится и поможет вам."
-                )
-
-                return Response({"status": "Оператор уведомлён, бот не смог ответить"}, status=status.HTTP_200_OK)
-
-        return Response({"status": "Сообщение отправлено"}, status=status.HTTP_201_CREATED)
+        return Response({"status":"Сообщение отправлено"}, status=status.HTTP_201_CREATED)
 
 class EndChatView(APIView):
     permission_classes = [permissions.IsAuthenticated]
