@@ -2,7 +2,11 @@ from dorm.models import EvidenceType
 from django.core.mail import send_mail
 from django.conf import settings
 from sentence_transformers import SentenceTransformer
+import re
+from dorm.ai.phi3_helper import ask_phi3
+
 from sklearn.metrics.pairwise import cosine_similarity
+
 
 
 def send_email_notification(email, message):
@@ -59,23 +63,66 @@ def calculate_application_score(application):
 
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
+# Функция для поиска номера общежития в вопросе
+def extract_dorm_number(text):
+    match = re.search(r'общежитие\s*№?\s*(\d+)', text)
+    if match:
+        return match.group(1)
+    return None
+
+# Функция для распознавания эмоций
+def detect_emotion(question):
+    emotions_keywords = {
+        "боюсь": "Понимаю ваше волнение. Всё решаемо — советую обратиться к куратору или в деканат, они обязательно помогут.",
+        "страшно": "Понимаю ваше волнение. Всё решаемо — советую обратиться к куратору или в деканат, они обязательно помогут.",
+        "переживаю": "Понимаю ваше волнение. Всё решаемо — советую обратиться к куратору или в деканат, они обязательно помогут.",
+        "не дали общагу": "Не переживайте! Обратитесь в отдел студенческого проживания для дополнительной консультации.",
+        "не получил место": "Не переживайте! Обратитесь в отдел студенческого проживания для дополнительной консультации.",
+        "что дальше делать": "Вы можете подать апелляцию или обратиться в приёмную комиссию для повторной консультации.",
+        "что теперь": "Вы можете подать апелляцию или обратиться в приёмную комиссию для повторной консультации.",
+        "тупой": "Мне жаль, что вы расстроены. Давайте попробуем найти решение вместе.",
+        "плохой бот": "Мне жаль, что вы расстроены. Давайте попробуем найти решение вместе.",
+    }
+    for key, response in emotions_keywords.items():
+        if key in question.lower():
+            return response
+    return None
+
+# Основная функция поиска ответа
 def find_best_answer(question):
+    # Сначала определяем эмоцию
+    emotion_answer = detect_emotion(question)
+    if emotion_answer:
+        return emotion_answer
+
     from dorm.models import KnowledgeBase
-
     entries = KnowledgeBase.objects.all()
+    question_lower = question.lower()
 
-    best_answer = "Извините, я пока не знаю ответа на этот вопрос."
-    best_score = 0.0
+    # Поиск по номеру общежития
+    number = extract_dorm_number(question_lower)
+    if number:
+        for entry in entries:
+            if number in entry.question_keywords:
+                return entry.answer
 
-    # 👉 вот здесь определяем user_vector
+    # Прямое вхождение
+    for entry in entries:
+        if entry.question_keywords.lower() in question_lower:
+            return entry.answer
+
+    # Векторное сравнение
     user_vector = model.encode([question])
-
+    best_answer = ""
+    best_score = 0.0
     for entry in entries:
         entry_vector = model.encode([entry.question_keywords])
         score = cosine_similarity(user_vector, entry_vector)[0][0]
-
         if score > best_score:
             best_score = score
             best_answer = entry.answer
+
+    if best_score < 0.5:
+        return None  # если очень плохое совпадение — звать оператора
 
     return best_answer

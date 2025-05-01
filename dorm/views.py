@@ -743,45 +743,54 @@ class SendMessageView(APIView):
         sender = request.user
         receiver = chat.student if sender.is_staff else User.objects.filter(is_staff=True).first()
 
-        # Сохраняем сообщение от студента/админа
+        # Сохраняем сообщение от студента или админа
         Message.objects.create(chat=chat, sender=sender, receiver=receiver, content=text)
 
-        # Если это студент — запускаем AI
+        # Если сообщение от студента — подключаем бота
         if not sender.is_staff:
             ai_answer = find_best_answer(text)
 
-            if ai_answer and "не знаю" not in ai_answer.lower():
-                # AI нашёл ответ — отправляем его от имени "бота"
-                bot_user = User.objects.filter(s="F22016183").first()
-                if not bot_user:
-                    bot_user = User.objects.create(username="DormMateBot", is_staff=True)
-                Message.objects.create(chat=chat, sender=bot_user, receiver=sender, content=ai_answer)
+            if ai_answer:
+                bot_user, _ = User.objects.get_or_create(
+                    s="F22016183",
+                    defaults={
+                        "first_name": "DormMateBot",
+                        "is_staff": True,
+                        "is_active": True,
+                        "password": "pbkdf2_sha256$260000$fakebotpassword$fakehashedpassword"  # можно указать любой
+                    }
+                )
+                Message.objects.create(
+                    chat=chat,
+                    sender=bot_user,
+                    receiver=sender,
+                    content=ai_answer
+                )
                 return Response({"status": "Ответ сгенерирован ботом"}, status=status.HTTP_201_CREATED)
-
             else:
-                # AI не нашёл ответ — уведомляем админа
+                # Если бот не нашёл ответ
                 admin = User.objects.filter(is_staff=True).first()
+
                 Notification.objects.create(
                     recipient=admin,
                     message=f"Новый вопрос в чате #{chat.id}, требуется участие оператора."
                 )
 
-                channel_layer = get_channel_layer()
-                async_to_sync(channel_layer.group_send)(
-                    "admin_notifications",
-                    {
-                        "type": "new_chat",
-                        "chat_id": chat.id,
-                        "student": sender.username,
-                        "question": text
+                system_user, _ = User.objects.get_or_create(
+                    s="SYSTEM",
+                    defaults={
+                        "first_name": "System",
+                        "is_staff": True,
+                        "is_active": True,
+                        "password": "pbkdf2_sha256$260000$systempassword$fakehashedsystempassword"
                     }
                 )
 
                 Message.objects.create(
                     chat=chat,
-                    sender=None,  # Можно использовать специального "системного" пользователя
+                    sender=system_user,
                     receiver=sender,
-                    content="Спасибо за вопрос! Наш оператор скоро подключится к чату и поможет вам."
+                    content="Ваш вопрос сложный! Оператор скоро подключится и поможет вам."
                 )
 
                 return Response({"status": "Оператор уведомлён, бот не смог ответить"}, status=status.HTTP_200_OK)
