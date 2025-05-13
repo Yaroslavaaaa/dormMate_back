@@ -3,8 +3,6 @@ from django.core.mail import send_mail
 from django.conf import settings
 from sentence_transformers import SentenceTransformer
 import re
-from dorm.ai.phi3_helper import ask_phi3
-
 from sklearn.metrics.pairwise import cosine_similarity
 
 
