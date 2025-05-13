@@ -70,6 +70,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         blank=True,
         null=True
     )
+    iin = models.CharField(max_length=12, null=True, blank=True, verbose_name="ИИН")
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
 

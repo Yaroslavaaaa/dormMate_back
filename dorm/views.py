@@ -2,6 +2,7 @@ from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import viewsets, status, generics, filters, permissions, request
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
 from rest_framework.response import Response
 import pandas as pd
@@ -908,7 +909,6 @@ class GenerateSelectionAPIView(APIView):
             approval=False, status="pending"
         ).select_related('student').prefetch_related('evidences')
 
-        # Сортируем заявки на основе вычисленного балла
         sorted_applications = sorted(
             pending_applications,
             key=lambda app: calculate_application_score(app),
@@ -921,10 +921,9 @@ class GenerateSelectionAPIView(APIView):
         approved_students = []
 
         with transaction.atomic():
-            # Отмечаем выбранные заявки как "approved" для дальнейшего подтверждения
             for application in selected_applications:
                 application.approval = True
-                application.status = "approved"  # статус для ручного контроля
+                application.status = "approved"
                 application.save()
                 approved_students.append({
                     "student_s": getattr(application.student, "s", "Нет S"),
@@ -932,10 +931,8 @@ class GenerateSelectionAPIView(APIView):
                     "last_name": getattr(application.student, 'last_name', 'Нет имени'),
                     "course": getattr(application.student, 'course', 'Не указан'),
                     "ent_result": application.ent_result,
-                    "gpa": application.gpa,
                 })
 
-            # Отмечаем остальные заявки как отклонённые
             for application in rejected_applications:
                 application.status = "rejected"
                 application.save()
@@ -947,6 +944,7 @@ class GenerateSelectionAPIView(APIView):
             },
             status=status.HTTP_200_OK
         )
+
 
 
 
@@ -1478,9 +1476,17 @@ class IsAdminOrOwnerAndEditable(permissions.BasePermission):
 
 
 
-class ApplicationViewSet(APIView):
+class ApplicationPagination(PageNumberPagination):
+    page_size = 2
+    page_size_query_param = 'page_size'
+    # max_page_size = 100
+
+
+class ApplicationViewSet(viewsets.ModelViewSet):
     queryset = Application.objects.all()
     serializer_class = ApplicationSerializer
+    permission_classes = [IsAuthenticated, IsAdminOrOwnerAndEditable]
+    pagination_class = ApplicationPagination
 
     def get_queryset(self):
         user = self.request.user
@@ -1488,7 +1494,15 @@ class ApplicationViewSet(APIView):
             return Application.objects.all()
         return Application.objects.filter(student=user.student)
 
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrOwnerAndEditable]
+    def get_paginated_response(self, data):
+        paginator = self.paginator
+        return Response({
+            'count': paginator.page.paginator.count,
+            'next': paginator.get_next_link(),
+            'previous': paginator.get_previous_link(),
+            'results': data,
+            'page_size': self.pagination_class.page_size
+        })
 
 class ApproveStudentApplicationAPIView(APIView):
         permission_classes = [IsAdmin]
@@ -1603,7 +1617,7 @@ class ExportStudentInDormExcelView(APIView):
         sheet = workbook.active
         sheet.title = "Студенты в общежитиях"
 
-        headers = ["S Студента", "Фамилия", "Имя", "Отчество", "Общежитие", "Комната", "ID Заявления", "Ордер"]
+        headers = ["S Студента", "Фамилия", "Имя", "Отчество", "Общежитие", "Комната", "ID Заявления", "Ордер", "ИИН"]
         sheet.append(headers)
 
         students_in_dorm = StudentInDorm.objects.select_related('student_id', 'dorm_id', 'application_id')
@@ -1617,7 +1631,8 @@ class ExportStudentInDormExcelView(APIView):
                 getattr(student_dorm.dorm_id, 'name', "Нет данных"),
                 student_dorm.room or "Нет данных",
                 student_dorm.application_id.id if student_dorm.application_id else "Нет данных",
-                student_dorm.order.url if student_dorm.order else "Нет"
+                student_dorm.order.url if student_dorm.order else "Нет",
+                getattr(student, 'iin', "Нет данных"),
             ]
             sheet.append(row)
 

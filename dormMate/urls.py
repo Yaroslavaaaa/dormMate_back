@@ -8,6 +8,7 @@ from dorm.views import *
 
 
 
+
 router = DefaultRouter()
 router.register(r'dorms', DormsViewSet, basename='dorm')
 router.register(r'students', StudentsViewSet, basename='students')
@@ -37,7 +38,7 @@ urlpatterns = [
     path("api/v1/logout/", LogoutView.as_view(), name="logout"),
     path("api/v1/usertype/", UserTypeView.as_view(), name="usertype"),
     path('api/v1/change_password/', ChangePasswordView.as_view(), name='change_password'),
-    path('api/v1/applications/', ApplicationViewSet.as_view(), name='applications'),
+    # path('api/v1/applications/', ApplicationViewSet.as_view(), name='applications'),
     path('api/v1/applications/<int:application_id>/delete/', DeleteStudentApplicationAPIView.as_view(),name='delete_application'),
     path('api/v1/applications/<int:application_id>/approve/',ApproveStudentApplicationAPIView.as_view(), name='approve_application'),
     path('api/v1/applications/<int:application_id>/reject/',RejectStudentApplicationAPIView.as_view(), name='approve_application'),
@@ -52,6 +53,7 @@ urlpatterns = [
     path('api/v1/applications/', ApplicationListView.as_view(), name='application-list'),
     path('api/v1/regions/', RegionListView.as_view(), name='region-list'),
     path('api/v1/application/', UserApplicationView.as_view(), name='application'),
+    path('api/v1/applications/', ApplicationListView.as_view(), name='application-list'),
 
     path('knowledge/', KnowledgeBaseListView.as_view(), name='knowledge-base'),
 
