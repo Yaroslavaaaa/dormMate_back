@@ -32,6 +32,9 @@ from django.db.models import Sum
 from django.db import transaction
 from collections import defaultdict
 import json
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.generics import RetrieveAPIView
+
 
 from rest_framework.permissions import BasePermission
 import PyPDF2
@@ -743,11 +746,14 @@ class SendMessageView(APIView):
         sender = request.user
         receiver = chat.student if sender.is_staff else User.objects.filter(is_staff=True).first()
 
-        # Сохраняем сообщение от студента или админа
         Message.objects.create(chat=chat, sender=sender, receiver=receiver, content=text)
 
-        # Если сообщение от студента — подключаем бота
         if not sender.is_staff:
+
+            if chat.is_operator_connected:
+                return Response({"status": "Сообщение отправлено"}, status=status.HTTP_201_CREATED)
+
+
             ai_answer = find_best_answer(text)
 
             if ai_answer:
@@ -768,7 +774,6 @@ class SendMessageView(APIView):
                 )
                 return Response({"status": "Ответ сгенерирован ботом"}, status=status.HTTP_201_CREATED)
             else:
-                # Если бот не нашёл ответ
                 admin = User.objects.filter(is_staff=True).first()
 
                 Notification.objects.create(
@@ -801,36 +806,69 @@ class EndChatView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, chat_id):
-        """Помечаем чат как неактивный, если пользователь - владелец или админ."""
         chat = get_object_or_404(Chat, id=chat_id, is_active=True)
         if request.user.is_staff or chat.student == request.user:
             chat.is_active = False
             chat.status = 'closed'
+            chat.is_operator_connected = False
             chat.save()
             return Response({"status": "Чат завершён"}, status=status.HTTP_200_OK)
         return Response({"error": "Нет доступа к этому чату."}, status=status.HTTP_403_FORBIDDEN)
 
+
+
+class ChatDetailView(RetrieveAPIView):
+    queryset = Chat.objects.all()
+    serializer_class = ChatSerializer
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'id'
+
+
+
 class RequestAdminView(APIView):
     permission_classes = [IsStudent]
+
     def post(self, request):
         chat_id = request.data.get('chat_id')
         chat = get_object_or_404(Chat, id=chat_id, is_active=True, student=request.user)
-        admin = get_object_or_404(User, is_staff=True)
-        Notification.objects.create(
-            recipient=admin,
-            message=f"Студент {(request.user.username if hasattr(request.user, 'username') else request.user.s)[:50]} просит подключить оператора к чату #{chat.id}"
+
+        admins = User.objects.filter(is_staff=True)
+
+        if not admins.exists():
+            return Response({"error": "Нет доступных админов"}, status=status.HTTP_404_NOT_FOUND)
+
+        chat.is_operator_connected = True
+        chat.save()
+
+        Message.objects.create(
+            chat=chat,
+            sender=request.user,
+            receiver=None,
+            content="Здравствуйте! Мне требуется помощь оператора.",
+            is_from_bot=False
         )
+
+        student_name = (request.user.username if hasattr(request.user, 'username') else request.user.s)[:50]
+        message = f"Студент {student_name} просит подключить оператора к чату #{chat.id}"
+
+        for admin in admins:
+            Notification.objects.create(
+                recipient=admin,
+                message=message
+            )
+
         channel_layer = get_channel_layer()
         async_to_sync(channel_layer.group_send)(
             "admin_notifications",
             {
                 "type": "new_chat",
                 "chat_id": chat.id,
-                "student": request.user.username if hasattr(request.user, 'username') else request.user.s,
+                "student": student_name,
                 "question": "Запрос оператора"
             }
         )
-        return Response({"status": "Оператор уведомлен"}, status=status.HTTP_200_OK)
+
+        return Response({"status": "Операторы уведомлены"}, status=status.HTTP_200_OK)
 
 
 
@@ -1674,14 +1712,24 @@ class AvatarUploadView(APIView):
 
 
 
+class UserApplicationView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            application = Application.objects.get(student=request.user)
+            serializer = ApplicationSerializer(application)
+            return Response(serializer.data)
+        except Application.DoesNotExist:
+            return Response({'detail': 'Заявка не найдена.'}, status=404)
+
+
+
 
 class AdminViewSet(viewsets.ModelViewSet):
     queryset = Admin.objects.all()
     serializer_class = AdminSerializer
     permission_classes = [IsAdmin]
-
-
-
 
 
 
@@ -1693,6 +1741,20 @@ class ApplicationListView(ListAPIView):
 
         return queryset
 
+
+
+class ApplicationEvidenceListView(APIView):
+    permission_classes = [IsAuthenticated, IsStudent]
+
+    def get(self, request, *args, **kwargs):
+        qs = ApplicationEvidence.objects.filter(
+            application__student=request.user.student
+        ).order_by('created_at')
+
+        serializer = ApplicationEvidenceSerializer(
+            qs, many=True, context={'request': request}
+        )
+        return Response(serializer.data)
 
 
 
@@ -1733,6 +1795,7 @@ class AssignRoomAPIView(APIView):
 
 class StudentApplicationUpdateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
 
     def get(self, request, *args, **kwargs):
         """Получение данных заявки студента."""
@@ -1752,9 +1815,12 @@ class StudentApplicationUpdateView(APIView):
 
         data = request.data
 
-        new_cost = data.get("dormitory_cost", None)
-        if new_cost is not None:
-            application.dormitory_cost = new_cost
+        changed = False
+        for field in ("dormitory_cost", "parent_phone", "ent_result"):
+            if field in data:
+                setattr(application, field, data[field])
+                changed = True
+        if changed:
             application.save()
 
         added_evidences = []

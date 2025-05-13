@@ -51,7 +51,7 @@ urlpatterns = [
     path('api/v1/', include(router.urls)),
     path('api/v1/applications/', ApplicationListView.as_view(), name='application-list'),
     path('api/v1/regions/', RegionListView.as_view(), name='region-list'),
-    path('ap1/v1/application/', UserApplicationView.as_view(), name='application'),
+    path('api/v1/application/', UserApplicationView.as_view(), name='application'),
 
     path('knowledge/', KnowledgeBaseListView.as_view(), name='knowledge-base'),
 
@@ -81,6 +81,9 @@ urlpatterns = [
     path('api/v1/global-settings/', GlobalSettingsAPIView.as_view(), name='global-settings'),
     path('api/v1/my-admin-role/', MyAdminRoleAPIView.as_view(), name='my-admin-role'),
     path('api/v1/upload-avatar/', AvatarUploadView.as_view(), name='upload-avatar'),
+    path('api/v1/application/', UserApplicationView.as_view(), name='application'),
+    path('api/v1/application/evidences/', ApplicationEvidenceListView.as_view(), name='application-evidences'),
+    path('api/v1/chats/<int:id>/', ChatDetailView.as_view(), name='chat-detail'),
 
 
 ]

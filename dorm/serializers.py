@@ -144,7 +144,7 @@ class ChatSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Chat
-        fields = ('id', 'student', 'status', 'is_active', 'created_at')
+        fields = ('id', 'student', 'status', 'is_active', 'created_at', 'is_operator_connected')
 
     def get_student(self, obj):
         return {
@@ -199,15 +199,11 @@ class EvidenceTypeSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
 
     def create(self, validated_data):
-        # достаём список ключевых слов
         kw_list = validated_data.pop('keywords', [])
-        # для дебага — залогируем, что пришло:
         print(">> EvidenceType.create(), keywords payload:", kw_list)
 
-        # создаём сам тип доказательства
         evidence = EvidenceType.objects.create(**validated_data)
 
-        # явно создаём записи в промежуточной таблице
         for kw in kw_list:
             EvidenceKeyword.objects.create(
                 evidence_type=evidence,
@@ -219,16 +215,12 @@ class EvidenceTypeSerializer(serializers.ModelSerializer):
         kw_list = validated_data.pop('keywords', None)
         print(">> EvidenceType.update(), keywords payload:", kw_list)
 
-        # обновляем простые поля
         for attr, val in validated_data.items():
             setattr(instance, attr, val)
         instance.save()
 
-        # если пришли ключевые слова — перезапишем m2m
         if kw_list is not None:
-            # сначала удалим старые связи
             EvidenceKeyword.objects.filter(evidence_type=instance).delete()
-            # и создадим новые
             for kw in kw_list:
                 EvidenceKeyword.objects.create(
                     evidence_type=instance,
@@ -255,26 +247,19 @@ class ApplicationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Application
-        fields = (
+        fields = '__all__'
+        read_only_fields = [
             'id',
             'student',
             'approval',
             'status',
-            'dormitory_cost',
-            'test_answers',
-            'test_result',
             'payment_screenshot',
-            'ent_result',
-            'gpa',
-            'evidences',
-            'score',
+            'is_full_payment',
             'created_at',
             'updated_at',
-            'gpa'
-        )
+        ]
 
     def get_gpa(self, obj):
-        # obj - это instance Application
         if obj.student:
             return obj.student.gpa
         return None
@@ -282,7 +267,6 @@ class ApplicationSerializer(serializers.ModelSerializer):
         try:
             return calculate_application_score(obj)
         except Exception as e:
-            # Логируем ошибку, чтобы понять, что именно происходит
             import logging
             logger = logging.getLogger(__name__)
             logger.error("Error calculating score for application %s: %s", obj.id, e)
@@ -309,7 +293,6 @@ class ApplicationSerializer(serializers.ModelSerializer):
 
 
 class StudentInDormSerializer(serializers.ModelSerializer):
-    # Вложенное представление для студента, заявление и общежития.
     student = StudentSerializer(source='student_id', read_only=True)
     application = ApplicationSerializer(source='application_id', read_only=True)
     dorm = DormSerializer(source='dorm_id', read_only=True)
@@ -318,10 +301,10 @@ class StudentInDormSerializer(serializers.ModelSerializer):
         model = StudentInDorm
         fields = [
             'id',
-            'student',      # вложенные данные по студенту
-            'dorm',         # вложенные данные по общежитию
-            'group',        # номер группы/комнаты
-            'application',  # вложенные данные по заявке
+            'student',
+            'dorm',
+            'group',
+            'application',
             'order',
             'room'
         ]

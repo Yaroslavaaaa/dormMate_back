@@ -205,7 +205,6 @@ class EvidenceType(models.Model):
         help_text="Название поля в Application или Student, откуда брать значение при отсутствии загруженного доказательства",
         verbose_name="Поле автозаполнения"
     )
-    # ManyToManyField через промежуточную модель EvidenceKeyword
     keywords = models.ManyToManyField('Keyword', through='EvidenceKeyword', blank=True, null=True, verbose_name="Ключевые слова")
 
     def __str__(self):
@@ -260,11 +259,33 @@ class Application(models.Model):
     parent_phone = models.CharField(max_length=20, null=True, blank=True, verbose_name="Телефон родителей")
 
 
-    # Поля для ЕНТ и GPA остаются в модели
     ent_result = models.PositiveIntegerField(null=True, blank=True, verbose_name="Результат ЕНТ")
 
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Время создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Время последнего обновления")
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            old = Application.objects.get(pk=self.pk)
+            if old.status != self.status:
+                self._handle_status_change(old.status, self.status)
+        super().save(*args, **kwargs)
+
+    def _handle_status_change(self, old_status, new_status):
+        user = self.student  # или self.student, если студент == User
+
+        messages = {
+            'rejected': 'Статус заявки был изменен. Ваша заявка отклонена.',
+            'awaiting_payment': 'Статус заявки был изменен. Ваша заявка одобрена. Внесите оплату и прикрепите квитанцию в профиле в разделе статус заявки.',
+            'awaiting_order': ' Статус заявки был изменен. Оплата подтверждена. Ожидайте ордер на заселение.',
+            'order': 'Статус заявки был изменен. Ваш ордер готов! Детали можете посмотреть в профие в разделе статус заявки.'
+        }
+
+        if new_status in messages:
+            Notification.objects.create(
+                recipient=user,
+                message=messages[new_status]
+            )
 
 
     def __str__(self):
@@ -304,6 +325,7 @@ class ApplicationEvidence(models.Model):
 class Chat(models.Model):
     student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='chats')
     status = models.CharField(max_length=30, default='waiting_for_admin')
+    is_operator_connected = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -317,12 +339,12 @@ class Message(models.Model):
     content = models.TextField()
     timestamp = models.DateTimeField(auto_now_add=True)
     is_from_bot = models.BooleanField(default=False)
+    operator_requested_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return f"{self.sender} -> {self.receiver}: {self.content}"
 
 class Notification(models.Model):
-    # Если уведомления создаются для пользователя (админа или студента)
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
     message = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
@@ -364,14 +386,12 @@ class KnowledgeBase(models.Model):
 
 
 class GlobalSettings(models.Model):
-    # Единственный экземпляр в БД — singleton
     allow_application_edit = models.BooleanField(
         default=False,
         verbose_name="Студентам разрешено редактировать заявки"
     )
 
     def save(self, *args, **kwargs):
-        # Принудительно всегда сохраняем только одну запись с pk=1
         self.pk = 1
         super().save(*args, **kwargs)
 
