@@ -5,6 +5,8 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView, TokenVerifyView
 from dorm.views import *
+from dorm.studentViews import *
+from dorm.adminViews import *
 
 
 
@@ -19,7 +21,7 @@ router.register(r'evidence-types', EvidenceTypeViewSet, basename='evidencetype')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/v1/studentlist', StudentViewSet.as_view()),
+    # path('api/v1/studentlist', StudentViewSet.as_view({'get': 'list'})),
     path('api/v1/dormlist', DormView.as_view()),
     path('api/v1/questionlist', TestQuestionViewSet.as_view()),
     path('api/v1/upload-excel/', ExcelUploadView.as_view()),
