@@ -109,7 +109,6 @@ class IsOperator(IsAuthenticatedAdmin):
         if not super().has_permission(request, view):
             return False
 
-        # Главный админ (ROLE_SUPER) должен тоже иметь доступ к любым операциям оператора
         if hasattr(request.user, 'admin') and request.user.admin.role == Admin.ROLE_SUPER:
             return True
 
@@ -125,7 +124,6 @@ class IsRequestAdmin(IsAuthenticatedAdmin):
         if not super().has_permission(request, view):
             return False
 
-        # Главный админ и оператор тоже могут работать с заявками
         if hasattr(request.user, 'admin') and request.user.admin.role in {
             Admin.ROLE_SUPER, Admin.ROLE_OPERATOR
         }:
@@ -168,7 +166,6 @@ class StudentDetailView(RetrieveUpdateAPIView):
         except Student.DoesNotExist:
             raise NotFound("Студент с таким токеном не найден.")
 
-#ПЕРЕСМОТРЕТЬ
 class ApplicationDetailView(RetrieveUpdateAPIView):
     queryset = Application.objects.all()
     serializer_class = ApplicationSerializer

@@ -44,21 +44,30 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'channels',
+    'auditlog',
 ]
 
 AUTH_USER_MODEL = 'dorm.User'
 
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
+    # 1) CORS как можно выше, до Common/CSRF
+    "corsheaders.middleware.CorsMiddleware",
 
+    # 2) стандартные Django-мидлвари
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+
+    # 3) Auditlog сразу после того, как request.user уже установлен
+    'dorm.middleware.JWTAuthMiddleware',
+    "auditlog.middleware.AuditlogMiddleware",
+
+    # 4) остальные
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
 ROOT_URLCONF = 'dormMate.urls'
@@ -85,10 +94,23 @@ WSGI_APPLICATION = 'dormMate.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
+
+
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'dormmate',
+        'USER': 'postgres',
+        'PASSWORD': 'ya242004',
+        'HOST': 'localhost',
+        'PORT': '5434',
     }
 }
 

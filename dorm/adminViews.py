@@ -195,6 +195,9 @@ class ExcelUploadView(APIView):
 
                 password = birth_date.strftime('%d%m%Y')
 
+
+
+
                 student, created = Student.objects.update_or_create(
                     s=row['student_s'],
                     defaults={
@@ -207,6 +210,7 @@ class ExcelUploadView(APIView):
                         'phone_number': row['phone_number'],
                         'birth_date': birth_date,
                         'gender': gender,
+                        'iin': row['iin'],
                         'is_active': True,
                     }
                 )
@@ -363,7 +367,6 @@ class NotifyApprovedStudentsAPIView(APIView):
 
 
 
-
 class PaymentConfirmationAPIView(APIView):
     permission_classes = [IsAdmin]
 
@@ -371,78 +374,84 @@ class PaymentConfirmationAPIView(APIView):
         excel_file = request.FILES.get('excel_file')
         if not excel_file:
             return Response(
-                {"detail": "Excel‑файл обязателен для проверки данных студентов."},
+                {"detail": "Excel-файл обязателен для проверки данных студентов."},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
         try:
             df = pd.read_excel(excel_file)
         except Exception as e:
             return Response(
-                {"detail": f"Ошибка при чтении Excel‑файла: {str(e)}"},
+                {"detail": f"Ошибка при чтении Excel-файла: {str(e)}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        valid_students = {}
-        for index, row in df.iterrows():
-            key = (
-                row['first_name'].strip() if isinstance(row['first_name'], str) else row['first_name'],
-                row['last_name'].strip() if isinstance(row['last_name'], str) else row['last_name'],
-                row['middle_name'].strip() if isinstance(row['middle_name'], str) else row['middle_name'],
-                str(row['phone_number']).strip()
-            )
-            valid_students[key] = row['sum']
 
-        approved_applications_all = Application.objects.filter(
+        valid_payments = {}
+        for _, row in df.iterrows():
+            raw_iin = row.get('iin') or row.get('ИИН')
+            if pd.isna(raw_iin):
+                continue
+            iin = str(raw_iin).strip()
+
+            paid = row.get('Оплачено')
+            if pd.isna(paid):
+                continue
+            paid_amount = float(paid)
+
+            valid_payments[iin] = paid_amount
+
+        approved_apps = Application.objects.filter(
             approval=True,
             payment_screenshot__isnull=False
         ).exclude(payment_screenshot="")
 
         added_students = []
         with transaction.atomic():
-            for app in approved_applications_all:
+            for app in approved_apps:
                 student = app.student
-                key = (
-                    student.first_name.strip() if student.first_name and isinstance(student.first_name, str) else student.first_name,
-                    student.last_name.strip() if student.last_name and isinstance(student.last_name, str) else student.last_name,
-                    student.middle_name.strip() if student.middle_name and isinstance(student.middle_name, str) else student.middle_name,
-                    str(student.phone_number).strip()
-                )
-                if key in valid_students:
-                    excel_sum = valid_students[key]
-                    if excel_sum == app.dormitory_cost:
-                        app.is_full_payment = True
-                    elif excel_sum == (app.dormitory_cost / 2):
-                        app.is_full_payment = False
-                    else:
-                        app.is_full_payment = None
+                student_iin = str(student.iin).strip() if student.iin else None
 
-                    app.status = 'awaiting_order'
-                    app.save()
+                if not student_iin or student_iin not in valid_payments:
+                    continue
 
+                excel_paid = valid_payments[student_iin]
 
+                if excel_paid == app.dormitory_cost:
+                    app.is_full_payment = True
+                elif excel_paid == (app.dormitory_cost / 2):
+                    app.is_full_payment = False
+                else:
+                    app.is_full_payment = None
 
-                    if app.is_full_payment is not None:
-                        if not StudentInDorm.objects.filter(student_id=app.student, application_id=app).exists():
-                            StudentInDorm.objects.create(
-                                student_id=app.student,
-                                dorm_id=None,
-                                group=None,
-                                application_id=app,
-                            )
-                            added_students.append({
-                                "student_email": student.email,
-                                "application_id": app.id
-                            })
+                app.status = 'awaiting_order'
+                app.save()
+
+                if app.is_full_payment is not None:
+                    created = StudentInDorm.objects.filter(
+                        student_id=student,
+                        application_id=app
+                    ).exists()
+                    if not created:
+                        StudentInDorm.objects.create(
+                            student_id=student,
+                            dorm_id=None,
+                            group=None,
+                            application_id=app,
+                        )
+                        added_students.append({
+                            "student_iin": student_iin,
+                            "application_id": app.id,
+                            "paid": excel_paid
+                        })
 
         return Response(
             {
-                "detail": "Оплата подтверждена. Студенты добавлены в StudentInDorm с статусом 'waiting_order'.",
+                "detail": "Оплата подтверждена на основании колонки «Оплачено».",
                 "added_students": added_students
             },
             status=status.HTTP_200_OK
         )
-
-
 
 
 
@@ -849,5 +858,57 @@ class AssignRoomAPIView(APIView):
 
 
 
+class ClearStudentInDormView(APIView):
+    permission_classes = [IsSuperAdmin]  # только админы
+
+    def delete(self, request):
+        deleted_count, _ = StudentInDorm.objects.all().delete()
+        return Response(
+            {'detail': f'Удалено {deleted_count} записей StudentInDorm'},
+            status=status.HTTP_204_NO_CONTENT
+        )
 
 
+
+
+from rest_framework import serializers, viewsets, permissions
+from django.contrib.contenttypes.models import ContentType
+from django.contrib.auth import get_user_model
+from django.core.cache import cache
+from django.db.models import Q
+
+User = get_user_model()
+
+
+class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = AuditLogSerializer
+    # permission_classes = [IsAdmin]
+    ordering_fields = ['timestamp']
+    ordering = ['-timestamp']
+
+    def get_allowed_user_ids(self):
+        cache_key = 'audit_log_allowed_user_ids'
+        allowed_ids = cache.get(cache_key)
+
+        if allowed_ids is None:
+            allowed_ids = list(
+                User.objects.filter(
+                    Q(admin__isnull=False) | Q(is_superuser=True)
+                ).values_list('pk', flat=True)
+            )
+            cache.set(cache_key, allowed_ids, timeout=60 * 60 * 24)
+
+        return allowed_ids
+
+    def get_queryset(self):
+        return (
+            LogEntry.objects
+            .filter(actor_id__in=self.get_allowed_user_ids())
+            .select_related('actor')
+            .only(
+                'id',
+                'actor_id',
+                'action',
+                'timestamp',
+            )
+        )

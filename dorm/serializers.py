@@ -2,11 +2,55 @@ from rest_framework import serializers
 from .models import *
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
+import bleach
 
 from .utils import calculate_application_score
 
 
-class StudentSerializer(serializers.ModelSerializer):
+def sanitize_string(value):
+    """Очищает строку от всех HTML-тегов"""
+    return bleach.clean(value, tags=[], attributes={}, strip=True) if isinstance(value, str) else value
+
+
+def sanitize_data(data, serializer):
+    """
+    Рекурсивно очищает все строки в словаре data,
+    проходя по полям сериализатора
+    """
+    for field_name, field in serializer.fields.items():
+        if field_name not in data:
+            continue
+
+        value = data[field_name]
+
+        # Обычные строковые поля
+        if isinstance(field, serializers.CharField) and isinstance(value, str):
+            data[field_name] = sanitize_string(value)
+
+        # Вложенные сериализаторы
+        elif isinstance(field, serializers.ListSerializer):
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        sanitize_data(item, field.child)
+
+        elif isinstance(field, serializers.ModelSerializer) and isinstance(value, dict):
+            sanitize_data(value, field)
+
+    return data
+
+
+class SanitizedModelSerializer(serializers.ModelSerializer):
+    """
+    Базовый сериализатор, автоматически очищающий все строки от HTML
+    в обычных и вложенных полях.
+    """
+
+    def validate(self, data):
+        return sanitize_data(data, self)
+
+
+class StudentSerializer(SanitizedModelSerializer):
     region = serializers.PrimaryKeyRelatedField(queryset=Region.objects.all())
     class Meta:
         model = Student
@@ -14,14 +58,14 @@ class StudentSerializer(serializers.ModelSerializer):
 
 
 
-class GlobalSettingsSerializer(serializers.ModelSerializer):
+class GlobalSettingsSerializer(SanitizedModelSerializer):
     class Meta:
         model = GlobalSettings
         fields = ['allow_application_edit']
 
 
 
-class AdminSerializer(serializers.ModelSerializer):
+class AdminSerializer(SanitizedModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
 
     class Meta:
@@ -60,24 +104,24 @@ class AdminSerializer(serializers.ModelSerializer):
 
 
 
-class RegionSerializer(serializers.ModelSerializer):
+class RegionSerializer(SanitizedModelSerializer):
     class Meta:
         model = Region
         fields = '__all__'
 
-class DormImageSerializer(serializers.ModelSerializer):
+class DormImageSerializer(SanitizedModelSerializer):
     class Meta:
         model = DormImage
         fields = ["id", "image"]
 
-class DormSerializer(serializers.ModelSerializer):
+class DormSerializer(SanitizedModelSerializer):
     images = DormImageSerializer(many=True, read_only=True)
 
     class Meta:
         model = Dorm
         fields = "__all__"
 
-class TestQuestionSerializer(serializers.ModelSerializer):
+class TestQuestionSerializer(SanitizedModelSerializer):
     class Meta:
         model = TestQuestion
         fields = "__all__"
@@ -85,7 +129,7 @@ class TestQuestionSerializer(serializers.ModelSerializer):
 
 
 
-class ExcelUploadSerializer(serializers.Serializer):
+class ExcelUploadSerializer(SanitizedModelSerializer):
     file = serializers.FileField()
 
 class CustomTokenObtainSerializer(serializers.Serializer):
@@ -120,12 +164,12 @@ class CustomTokenObtainSerializer(serializers.Serializer):
             raise serializers.ValidationError('Must include "s" or "phone_number" and "password"')
 
 
-class ChangePasswordSerializer(serializers.Serializer):
+class ChangePasswordSerializer(SanitizedModelSerializer):
     old_password = serializers.CharField(required=True)
     new_password = serializers.CharField(required=True)
 
 
-class MessageSerializer(serializers.ModelSerializer):
+class MessageSerializer(SanitizedModelSerializer):
     sender_type = serializers.SerializerMethodField()
 
     class Meta:
@@ -139,7 +183,7 @@ class MessageSerializer(serializers.ModelSerializer):
         elif hasattr(obj.sender, 'admin') or obj.sender.is_staff or obj.sender.is_superuser:
             return 'admin'
         return 'unknown'
-class ChatSerializer(serializers.ModelSerializer):
+class ChatSerializer(SanitizedModelSerializer):
     student = serializers.SerializerMethodField()
 
     class Meta:
@@ -155,30 +199,30 @@ class ChatSerializer(serializers.ModelSerializer):
         }
 
 
-class NotificationSerializer(serializers.ModelSerializer):
+class NotificationSerializer(SanitizedModelSerializer):
     class Meta:
         model = Notification
         fields = ['id', 'message', 'created_at', 'is_read']
 
 
-class QuestionAnswerSerializer(serializers.ModelSerializer):
+class QuestionAnswerSerializer(SanitizedModelSerializer):
     class Meta:
         model = QuestionAnswer
         fields = '__all__'
 
 
-class QuestionAnswerSerializer(serializers.ModelSerializer):
+class QuestionAnswerSerializer(SanitizedModelSerializer):
     class Meta:
         model = QuestionAnswer
         fields = '__all__'
 
-class KnowledgeBaseSerializer(serializers.ModelSerializer):
+class KnowledgeBaseSerializer(SanitizedModelSerializer):
     class Meta:
         model = KnowledgeBase
         fields = ['id', 'question_keywords', 'answer']
 
 
-class EvidenceTypeSerializer(serializers.ModelSerializer):
+class EvidenceTypeSerializer(SanitizedModelSerializer):
     # включаем m2m поле
     keywords = serializers.PrimaryKeyRelatedField(
         many=True,
@@ -229,7 +273,7 @@ class EvidenceTypeSerializer(serializers.ModelSerializer):
         return instance
 
 
-class ApplicationEvidenceSerializer(serializers.ModelSerializer):
+class ApplicationEvidenceSerializer(SanitizedModelSerializer):
     evidence_type_code = serializers.CharField(source='evidence_type.code')
 
     class Meta:
@@ -239,7 +283,7 @@ class ApplicationEvidenceSerializer(serializers.ModelSerializer):
 
 
 
-class ApplicationSerializer(serializers.ModelSerializer):
+class ApplicationSerializer(SanitizedModelSerializer):
     student = StudentSerializer(read_only=True)
     evidences = ApplicationEvidenceSerializer(many=True, required=False)
     score = serializers.SerializerMethodField(read_only=True)
@@ -258,6 +302,8 @@ class ApplicationSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
+
+
 
     def get_gpa(self, obj):
         if obj.student:
@@ -292,7 +338,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
 
 
 
-class StudentInDormSerializer(serializers.ModelSerializer):
+class StudentInDormSerializer(SanitizedModelSerializer):
     student = StudentSerializer(source='student_id', read_only=True)
     application = ApplicationSerializer(source='application_id', read_only=True)
     dorm = DormSerializer(source='dorm_id', read_only=True)
@@ -310,8 +356,41 @@ class StudentInDormSerializer(serializers.ModelSerializer):
         ]
 
 
-class KeywordSerializer(serializers.ModelSerializer):
+class KeywordSerializer(SanitizedModelSerializer):
     class Meta:
         model = Keyword
         fields = ['id', 'keyword']
         read_only_fields = ['id']
+
+
+
+from auditlog.models import LogEntry
+from rest_framework import serializers, viewsets, permissions
+
+class AuditLogSerializer(SanitizedModelSerializer):
+    # отдаём timestamp как есть (без source, DRF сам резолвит по имени)
+    timestamp = serializers.DateTimeField(read_only=True)
+
+    # actor будем брать из связанного User и приводить к строке
+    actor = serializers.SerializerMethodField()
+    changes = serializers.JSONField(read_only=True)
+
+    class Meta:
+        model = LogEntry
+        fields = (
+            'id',
+            'timestamp',
+            'actor',
+            'action',
+            'content_type',
+            'object_repr',
+            'changes',
+        )
+
+    def get_actor(self, obj):
+        # если пользователь был, вернём его имя или логин
+        if obj.actor:
+            # можете заменить на obj.actor.get_full_name() или .username
+            return str(obj.actor)
+        # иначе пометим как «system» или любой другой дефолт
+        return 'system'

@@ -61,7 +61,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     middle_name = models.CharField(max_length=100, verbose_name="Отчество", blank=True, null=True)
     email = models.EmailField(blank=True)
     birth_date = models.DateField(verbose_name="Дата рождения", blank=True, null=True)
-    phone_number = models.CharField(max_length=11, blank=True, null=True)
+    phone_number = models.CharField(max_length=11, blank=True, unique=True)
     avatar = models.ImageField(upload_to=avatar_upload_path, default='avatar/no-avatar.png')
     gender = models.CharField(
         max_length=1,
@@ -70,7 +70,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         blank=True,
         null=True
     )
-    iin = models.CharField(max_length=12, null=True, blank=True, verbose_name="ИИН")
+
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
 
@@ -93,6 +93,7 @@ class Student(User):
     course = models.CharField(max_length=100)
     region = models.ForeignKey('Region', on_delete=models.CASCADE, verbose_name="Область")
     gpa = models.DecimalField(max_digits=4, decimal_places=2, null=True, blank=True, verbose_name="GPA")
+    iin = models.CharField(max_length=12, unique=True, blank=True, verbose_name="ИИН")
 
     class Meta:
         verbose_name = 'Student'
@@ -404,4 +405,11 @@ class GlobalSettings(models.Model):
     class Meta:
         verbose_name = "Глобальная настройка"
         verbose_name_plural = "Глобальные настройки"
+
+
+from auditlog.registry import auditlog
+auditlog.register(Student)
+auditlog.register(Admin)
+auditlog.register(Keyword)
+auditlog.register(Application)
 
