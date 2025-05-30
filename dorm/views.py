@@ -1,76 +1,38 @@
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
 from django.core.exceptions import ObjectDoesNotExist
-from rest_framework import viewsets, status, generics, filters, permissions, request
+from rest_framework import status, generics
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
 from rest_framework.response import Response
-import pandas as pd
-from thefuzz import process
-from datetime import datetime
-from .models import *
 from .serializers import *
-from collections import Counter
-from django.db import transaction
-from collections import defaultdict
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.exceptions import NotFound, PermissionDenied
-from django.contrib.auth import authenticate
-from django.http import HttpResponse, Http404, JsonResponse
-from io import BytesIO
-import openpyxl
+from rest_framework.exceptions import NotFound
+from django.http import Http404, JsonResponse
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.views.generic import View
-from django.core.mail import send_mail
-from django.conf import settings
 from rest_framework.generics import ListAPIView
-from django.db.models import F, Case, When, Value, IntegerField, BooleanField
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Sum
-from collections import defaultdict
-import json
-from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.generics import RetrieveAPIView
 from django.db.models import Q
-from rest_framework.viewsets import ReadOnlyModelViewSet
-
-
-from rest_framework.permissions import BasePermission
-import PyPDF2
-
 from .utils import *
-
-
-class StudentViewSet(generics.ListAPIView):
-    queryset = Student.objects.all()
-    serializer_class = StudentSerializer
+from rest_framework import viewsets, permissions
 
 
 class RegionListView(generics.ListAPIView):
     queryset = Region.objects.all()
     serializer_class = RegionSerializer
 
-class DormView(generics.ListAPIView):
-    queryset = Dorm.objects.all()
-    serializer_class = DormSerializer
-
-
-class DormImageView(generics.ListAPIView):
-    queryset = DormImage.objects.all()
-    serializer_class = DormImageSerializer
-
 
 class StudentInDormView(generics.ListAPIView):
     queryset = StudentInDorm.objects.all()
     serializer_class = StudentInDormSerializer
 
+
 class TestQuestionViewSet(generics.ListAPIView):
     queryset = TestQuestion.objects.all()
     serializer_class = TestQuestionSerializer
-
 
 
 class IsAdmin(IsAuthenticated):
@@ -79,12 +41,10 @@ class IsAdmin(IsAuthenticated):
         return is_authenticated and (hasattr(request.user, 'admin') or request.user.is_superuser)
 
 
-
 class IsAuthenticatedAdmin(permissions.IsAuthenticated):
     def has_permission(self, request, view):
         if not super().has_permission(request, view):
             return False
-        # request.user.admin будет существовать только для Admin-пользователей
         return hasattr(request.user, 'admin') or request.user.is_superuser
 
 
@@ -93,14 +53,12 @@ class IsSuperAdmin(IsAuthenticatedAdmin):
         if not super().has_permission(request, view):
             return False
 
-        # Если это встроенный суперпользователь Django — даём доступ
         if request.user.is_superuser:
             return True
 
-        # Иначе проверяем роль в своей модели Admin
         return (
-            hasattr(request.user, 'admin')
-            and request.user.admin.role == Admin.ROLE_SUPER
+                hasattr(request.user, 'admin')
+                and request.user.admin.role == Admin.ROLE_SUPER
         )
 
 
@@ -113,8 +71,8 @@ class IsOperator(IsAuthenticatedAdmin):
             return True
 
         return (
-            hasattr(request.user, 'admin')
-            and request.user.admin.role == Admin.ROLE_OPERATOR
+                hasattr(request.user, 'admin')
+                and request.user.admin.role == Admin.ROLE_OPERATOR
         )
 
 
@@ -130,18 +88,15 @@ class IsRequestAdmin(IsAuthenticatedAdmin):
             return True
 
         return (
-            hasattr(request.user, 'admin')
-            and request.user.admin.role == Admin.ROLE_REQUEST
+                hasattr(request.user, 'admin')
+                and request.user.admin.role == Admin.ROLE_REQUEST
         )
-
 
 
 class KnowledgeBaseListView(generics.ListAPIView):
     queryset = KnowledgeBase.objects.all()
     serializer_class = KnowledgeBaseSerializer
     permission_classes = [permissions.IsAdminUser]
-
-
 
 
 class IsStudentOrAdmin(IsAuthenticated):
@@ -166,48 +121,9 @@ class StudentDetailView(RetrieveUpdateAPIView):
         except Student.DoesNotExist:
             raise NotFound("Студент с таким токеном не найден.")
 
-class ApplicationDetailView(RetrieveUpdateAPIView):
-    queryset = Application.objects.all()
-    serializer_class = ApplicationSerializer
-    permission_classes = [IsAdmin]
-
-    def get(self, request, *args, **kwargs):
-        application_id = kwargs.get('pk')
-        application = get_object_or_404(Application, id=application_id)
-
-        serialized_data = self.get_serializer(application).data
-
-        file_fields = [
-            'payment_screenshot',
-            'orphan_certificate',
-            'disability_1_2_certificate',
-            'disability_3_certificate',
-            'parents_disability_certificate',
-            'loss_of_breadwinner_certificate',
-            'social_aid_certificate',
-            'mangilik_el_certificate',
-            'olympiad_winner_certificate',
-        ]
-
-        serialized_data['files'] = [
-            {
-                'field_name': field,
-                'url': getattr(application, field).url if getattr(application, field) else None,
-                'name': getattr(application, field).name if getattr(application, field) else None
-            }
-            for field in file_fields if getattr(application, field)
-        ]
-
-        return Response(serialized_data)
-
-
-
-
-
 
 class PDFView(View):
     def get(self, request, pk, evidence_code):
-
         application_evidence = get_object_or_404(
             ApplicationEvidence,
             application__id=pk,
@@ -217,7 +133,6 @@ class PDFView(View):
         if file_field and file_field.name.lower().endswith('.pdf'):
             return FileResponse(file_field.open('rb'), content_type='application/pdf')
         return JsonResponse({'error': 'Запрошенный файл не является PDF или не существует.'}, status=400)
-
 
 
 class PaymentScreenshotView(View):
@@ -230,22 +145,13 @@ class PaymentScreenshotView(View):
         raise Http404("Скрин оплаты не найден или формат файла не поддерживается.")
 
 
-
-
-
-
-
-
 class IsStudent(IsAuthenticated):
     def has_permission(self, request, view):
         is_authenticated = super().has_permission(request, view)
         return is_authenticated and hasattr(request.user, 'student')
 
 
-
-
 class KeywordViewSet(viewsets.ModelViewSet):
-
     queryset = Keyword.objects.all()
     serializer_class = KeywordSerializer
     permission_classes = [IsAdmin]
@@ -261,25 +167,10 @@ class EvidenceTypeViewSet(viewsets.ModelViewSet):
         return [IsAdmin()]
 
 
-
-
-
-
 class DormCostListView(APIView):
     def get(self, request):
         costs = Dorm.objects.values_list('cost', flat=True).distinct()
         return Response(sorted(costs), status=status.HTTP_200_OK)
-
-
-
-
-
-
-
-
-
-
-
 
 
 class CustomTokenObtainView(APIView):
@@ -288,13 +179,6 @@ class CustomTokenObtainView(APIView):
         if serializer.is_valid():
             return Response(serializer.validated_data, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-
-
-
-
-
 
 
 class AdminNotificationListView(APIView):
@@ -314,6 +198,7 @@ class AdminNotificationListView(APIView):
         ids = request.data.get('notification_ids', [])
         Notification.objects.filter(pk__in=ids, recipient=request.user).update(is_read=True)
         return Response({"detail": "Отмечены прочитанными"}, status=status.HTTP_200_OK)
+
 
 class NotificationListView(APIView):
     permission_classes = [IsAuthenticated]
@@ -370,7 +255,8 @@ class QuestionView(APIView):
                 defaults={'status': 'waiting_for_admin'}
             )
             Message.objects.create(chat=chat, sender=student, content=question)
-            return Response({"message": "Вопрос отправлен администратору"}, status=status.HTTP_201_CREATED)# --- Чаты ---
+            return Response({"message": "Вопрос отправлен администратору"},
+                            status=status.HTTP_201_CREATED)
 
 
 class CreateChatView(APIView):
@@ -384,8 +270,6 @@ class CreateChatView(APIView):
 
         new_chat = Chat.objects.create(student=student, is_active=True, status='waiting_for_admin')
         return Response({"id": new_chat.id}, status=status.HTTP_201_CREATED)
-
-
 
 
 class AdminChatListView(generics.ListAPIView):
@@ -449,8 +333,6 @@ class ChatListView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-
-
 class SendMessageView(APIView):
     permission_classes = [IsStudentOrAdmin]
 
@@ -469,7 +351,6 @@ class SendMessageView(APIView):
 
             if chat.is_operator_connected:
                 return Response({"status": "Сообщение отправлено"}, status=status.HTTP_201_CREATED)
-
 
             ai_answer = find_best_answer(text)
 
@@ -519,6 +400,7 @@ class SendMessageView(APIView):
 
         return Response({"status": "Сообщение отправлено"}, status=status.HTTP_201_CREATED)
 
+
 class EndChatView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -533,17 +415,11 @@ class EndChatView(APIView):
         return Response({"error": "Нет доступа к этому чату."}, status=status.HTTP_403_FORBIDDEN)
 
 
-
 class ChatDetailView(RetrieveAPIView):
     queryset = Chat.objects.all()
     serializer_class = ChatSerializer
     permission_classes = [IsAuthenticated]
     lookup_field = 'id'
-
-
-
-
-
 
 
 class UpdateEvidenceStatusAPIView(APIView):
@@ -559,13 +435,10 @@ class UpdateEvidenceStatusAPIView(APIView):
         evidence.save()
         return Response({"message": "Статус справки обновлен."}, status=status.HTTP_200_OK)
 
+
 class EvidenceTypeListAPIView(ListAPIView):
     queryset = EvidenceType.objects.all()
     serializer_class = EvidenceTypeSerializer
-
-
-
-
 
 
 class LogoutView(APIView):
@@ -613,14 +486,18 @@ class ChangePasswordView(APIView):
             return Response({"error": "All fields are required."}, status=status.HTTP_400_BAD_REQUEST)
 
         if new_password != confirm_password:
-            return Response({"error": "New password and confirm password do not match."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "New password and confirm password do not match."},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         if len(new_password) < 8:
-            return Response({"error": "The new password must be at least 8 characters long."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "The new password must be at least 8 characters long."},
+                            status=status.HTTP_400_BAD_REQUEST)
         if not re.search(r'[A-Za-z]', new_password):
-            return Response({"error": "The new password must contain at least one letter."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "The new password must contain at least one letter."},
+                            status=status.HTTP_400_BAD_REQUEST)
         if not re.search(r'[\W_]', new_password):
-            return Response({"error": "The new password must contain at least one special character."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "The new password must contain at least one special character."},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         if not user.check_password(old_password):
             return Response({"error": "Current password is incorrect."}, status=status.HTTP_400_BAD_REQUEST)
@@ -643,7 +520,6 @@ class IsAdminOrOwnerAndEditable(permissions.BasePermission):
         settings = GlobalSettings.get_solo()
         is_owner = hasattr(request.user, 'student') and obj.student == request.user.student
         return settings.allow_application_edit and is_owner
-
 
 
 class ApplicationPagination(PageNumberPagination):
@@ -675,65 +551,6 @@ class ApplicationViewSet(viewsets.ModelViewSet):
         })
 
 
-
-
-
-
-
-
-
-
-
-
-
-class ChangeStudentDormitoryAPIView(APIView):
-    permission_classes = [IsAdmin]
-
-    def put(self, request, application_id, *args, **kwargs):
-        try:
-            application = Application.objects.get(id=application_id)
-        except Application.DoesNotExist:
-            return Response({"error": "Заявка с таким ID не найдена"}, status=status.HTTP_404_NOT_FOUND)
-
-        dormitory_name = request.data.get('dorm_name')
-        if not dormitory_name:
-            return Response({"error": "Не указано имя общежития"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            dormitory = Dorm.objects.get(name=dormitory_name)
-        except Dorm.DoesNotExist:
-            return Response({"error": "Общежитие с таким именем не найдено"}, status=status.HTTP_400_BAD_REQUEST)
-
-        application.dormitory_choice = dormitory
-        application.save()
-
-        student = application.student
-        student_in_dorm, created = StudentInDorm.objects.update_or_create(
-            student_id=student,
-            application_id=application,
-            defaults={
-                'dorm_id': dormitory,
-                'room': None,
-            }
-        )
-
-        return Response(
-            {
-                "message": "Общежитие для студента успешно изменено",
-                "application_id": application.id,
-                "dormitory_choice": dormitory.name,
-                "student_in_dorm_created": created,
-            },
-            status=status.HTTP_200_OK
-        )
-
-
-
-
-
-
-
-
 class DormsViewSet(viewsets.ModelViewSet):
     queryset = Dorm.objects.all()
     serializer_class = DormSerializer
@@ -743,6 +560,7 @@ class DormsViewSet(viewsets.ModelViewSet):
 class DormImageViewSet(viewsets.ModelViewSet):
     queryset = DormImage.objects.all()
     serializer_class = DormImageSerializer
+
     # permission_classes = [IsAdmin]
 
     def perform_create(self, serializer):
@@ -755,10 +573,6 @@ class DormImageViewSet(viewsets.ModelViewSet):
             serializer.save(dorm=dorm_obj)
         else:
             raise ValidationError("Поле 'dorm' обязательно для заполнения.")
-
-
-
-
 
 
 class GlobalSettingsAPIView(APIView):
@@ -782,26 +596,20 @@ class GlobalSettingsAPIView(APIView):
 class StudentsViewSet(viewsets.ModelViewSet):
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
-    # permission_classes = [IsAdmin]
 
     def get_queryset(self):
         qs = super().get_queryset()
         query = self.request.query_params.get('query', '').strip()
         if query:
             parts = query.split()
-
-            # Фильтр по эске:
             s_filter = Q(s__icontains=query.upper())
-
-            # Фильтр по ФИО (каждая часть должна встречаться в одном из трёх полей):
             fio_filter = Q()
             for part in parts:
                 fio_filter &= (
-                    Q(first_name__icontains=part) |
-                    Q(last_name__icontains=part) |
-                    Q(middle_name__icontains=part)
+                        Q(first_name__icontains=part) |
+                        Q(last_name__icontains=part) |
+                        Q(middle_name__icontains=part)
                 )
-
             qs = qs.filter(s_filter | fio_filter)
         return qs
 
@@ -810,11 +618,6 @@ class StudentsViewSet(viewsets.ModelViewSet):
         if Student.objects.filter(s=s_value).exists():
             raise ValidationError(f"Student with s = {s_value} already exists.")
         serializer.save()
-
-
-
-
-
 
 
 class UserApplicationView(APIView):
@@ -829,13 +632,10 @@ class UserApplicationView(APIView):
             return Response({'detail': 'Заявка не найдена.'}, status=404)
 
 
-
-
 class AdminViewSet(viewsets.ModelViewSet):
     queryset = Admin.objects.all()
     serializer_class = AdminSerializer
     permission_classes = [IsAdmin]
-
 
 
 class ApplicationListView(ListAPIView):
@@ -845,7 +645,6 @@ class ApplicationListView(ListAPIView):
         queryset = Application.objects.select_related('student')
 
         return queryset
-
 
 
 class ApplicationEvidenceListView(APIView):
@@ -860,10 +659,3 @@ class ApplicationEvidenceListView(APIView):
             qs, many=True, context={'request': request}
         )
         return Response(serializer.data)
-
-
-
-
-
-
-

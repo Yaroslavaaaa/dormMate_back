@@ -16,7 +16,6 @@ from pathlib import Path
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
@@ -27,7 +26,6 @@ SECRET_KEY = 'django-insecure-c4!s9(3y^h)8_thtf)o=wq15%6ol3h%m-!$yq+u^%$lhc+^r5c
 DEBUG = True
 
 ALLOWED_HOSTS = ['127.0.0.1', '10.0.2.2', 'localhost']
-
 
 # Application definition
 
@@ -48,7 +46,6 @@ INSTALLED_APPS = [
 ]
 
 AUTH_USER_MODEL = 'dorm.User'
-
 
 MIDDLEWARE = [
     # 1) CORS как можно выше, до Common/CSRF
@@ -90,7 +87,6 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'dormMate.wsgi.application'
 
-
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
@@ -100,7 +96,6 @@ WSGI_APPLICATION = 'dormMate.wsgi.application'
 #         'NAME': BASE_DIR / 'db.sqlite3',
 #     }
 # }
-
 
 
 DATABASES = {
@@ -113,7 +108,6 @@ DATABASES = {
         'PORT': '5434',
     }
 }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
@@ -133,7 +127,6 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
 # Internationalization
 # https://docs.djangoproject.com/en/5.1/topics/i18n/
 
@@ -145,7 +138,6 @@ USE_I18N = True
 
 USE_TZ = True
 
-
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
@@ -153,12 +145,10 @@ STATIC_URL = 'static/'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
-
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -167,7 +157,6 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 10
 }
-
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(hours=12),
@@ -209,7 +198,6 @@ SIMPLE_JWT = {
     "SLIDING_TOKEN_REFRESH_SERIALIZER": "rest_framework_simplejwt.serializers.TokenRefreshSlidingSerializer",
 }
 
-
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
     'dorm.backends.CustomBackend',
@@ -217,13 +205,11 @@ AUTHENTICATION_BACKENDS = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-] + [f"http://localhost:{port}" for port in range(1024, 65535)]
+                           "http://localhost:3000",
+                       ] + [f"http://localhost:{port}" for port in range(1024, 65535)]
 
 MIDDLEWARE.insert(0, 'corsheaders.middleware.CorsMiddleware')
 CORS_ALLOW_ALL_ORIGINS = True
-
-
 
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
@@ -232,13 +218,8 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = 'yaroslava.vuiko@narxoz.kz'
 EMAIL_HOST_PASSWORD = 'ixkn alnp jzuq eeow'
 
-
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels.layers.InMemoryChannelLayer",
     },
 }
-
-
-
-

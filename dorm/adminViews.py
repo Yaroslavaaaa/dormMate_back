@@ -1,55 +1,30 @@
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
-from django.core.exceptions import ObjectDoesNotExist
-from rest_framework import viewsets, status, generics, filters, permissions, request
-from rest_framework.pagination import PageNumberPagination
+from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 import pandas as pd
 from thefuzz import process
 from datetime import datetime
-from .models import *
 from .serializers import *
-from collections import Counter
-from django.db import transaction
-from collections import defaultdict
-from rest_framework.generics import RetrieveUpdateAPIView
-from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.exceptions import NotFound, PermissionDenied
-from django.contrib.auth import authenticate
-from django.http import HttpResponse, Http404, JsonResponse
+from django.http import HttpResponse
 from io import BytesIO
 import openpyxl
-from django.http import FileResponse
-from django.shortcuts import get_object_or_404
-from django.views.generic import View
-from django.core.mail import send_mail
-from django.conf import settings
-from rest_framework.generics import ListAPIView
-from django.db.models import F, Case, When, Value, IntegerField, BooleanField
-from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Sum
+from django.db.models import Sum, Count, F
 from django.db import transaction
 from collections import defaultdict
 import json
-from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.generics import RetrieveAPIView
-
-
-from rest_framework.permissions import BasePermission
-import PyPDF2
+from rest_framework import viewsets, permissions
+from django.contrib.auth import get_user_model
+from django.core.cache import cache
+from django.db.models import Q
 
 from .utils import *
-
-
 
 
 class IsAdmin(IsAuthenticated):
     def has_permission(self, request, view):
         is_authenticated = super().has_permission(request, view)
         return is_authenticated and (hasattr(request.user, 'admin') or request.user.is_superuser)
-
 
 
 class IsAuthenticatedAdmin(permissions.IsAuthenticated):
@@ -68,8 +43,8 @@ class IsSuperAdmin(IsAuthenticatedAdmin):
             return True
 
         return (
-            hasattr(request.user, 'admin')
-            and request.user.admin.role == Admin.ROLE_SUPER
+                hasattr(request.user, 'admin')
+                and request.user.admin.role == Admin.ROLE_SUPER
         )
 
 
@@ -82,8 +57,8 @@ class IsOperator(IsAuthenticatedAdmin):
             return True
 
         return (
-            hasattr(request.user, 'admin')
-            and request.user.admin.role == Admin.ROLE_OPERATOR
+                hasattr(request.user, 'admin')
+                and request.user.admin.role == Admin.ROLE_OPERATOR
         )
 
 
@@ -99,11 +74,9 @@ class IsRequestAdmin(IsAuthenticatedAdmin):
             return True
 
         return (
-            hasattr(request.user, 'admin')
-            and request.user.admin.role == Admin.ROLE_REQUEST
+                hasattr(request.user, 'admin')
+                and request.user.admin.role == Admin.ROLE_REQUEST
         )
-
-
 
 
 class MyAdminRoleAPIView(APIView):
@@ -135,12 +108,9 @@ class MyAdminRoleAPIView(APIView):
         return Response({'role': role_code, 'label': role_label})
 
 
-
-
-
-
 class ExcelUploadView(APIView):
     permission_classes = [IsAdmin]
+
     def post(self, request, *args, **kwargs):
         serializer = ExcelUploadSerializer(data=request.data)
         if serializer.is_valid():
@@ -192,11 +162,7 @@ class ExcelUploadView(APIView):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-
                 password = birth_date.strftime('%d%m%Y')
-
-
-
 
                 student, created = Student.objects.update_or_create(
                     s=row['student_s'],
@@ -223,9 +189,6 @@ class ExcelUploadView(APIView):
                             status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-
 
 
 class GenerateSelectionAPIView(APIView):
@@ -281,35 +244,25 @@ class GenerateSelectionAPIView(APIView):
         )
 
 
-
-
-
-
-
 class NotifyApprovedStudentsAPIView(APIView):
     permission_classes = [IsAdmin]
 
     def post(self, request, *args, **kwargs):
-        # Получаем все одобренные заявки для уведомления
         approved_applications = list(Application.objects.filter(
             approval=True, status="approved"
         ))
 
-        # Вычисляем вместимость общаг по стоимости: группируем Dorm по cost
         dorm_capacities = Dorm.objects.values('cost').annotate(total_capacity=Sum('total_places'))
         capacity_by_cost = {entry['cost']: entry['total_capacity'] for entry in dorm_capacities}
 
-        # Группируем заявки по dormitory_cost
         apps_by_cost = defaultdict(list)
         for app in approved_applications:
             apps_by_cost[app.dormitory_cost].append(app)
 
-        # Сортируем стоимости по убыванию (например, [800000, 400000])
         sorted_costs = sorted(capacity_by_cost.keys(), reverse=True)
 
         transferred_app_ids = []
 
-        # Для каждой группы, начиная с самой высокой стоимости, пытаемся перевести избыток заявок в группу с более низкой стоимостью
         for i in range(len(sorted_costs) - 1):
             cost = sorted_costs[i]
             next_cost = sorted_costs[i + 1]
@@ -318,7 +271,6 @@ class NotifyApprovedStudentsAPIView(APIView):
             overflow = len(current_apps) - capacity
 
             if overflow > 0:
-                # Определяем свободные места в группе со следующей (более низкой) стоимостью
                 next_capacity = capacity_by_cost.get(next_cost, 0)
                 current_next_count = len(apps_by_cost[next_cost])
                 available_lower = next_capacity - current_next_count
@@ -326,12 +278,10 @@ class NotifyApprovedStudentsAPIView(APIView):
                 to_transfer_count = min(overflow, available_lower) if available_lower > 0 else 0
 
                 if to_transfer_count > 0:
-                    # Сортируем заявки в группе с данной стоимостью по возрастанию балла (наименьший балл – первый)
                     current_apps_sorted = sorted(current_apps, key=lambda app: calculate_application_score(app))
                     apps_to_transfer = current_apps_sorted[:to_transfer_count]
 
                     for app in apps_to_transfer:
-                        # Переносим студента: меняем стоимость на следующую
                         old_cost = app.dormitory_cost
                         app.dormitory_cost = next_cost
                         app.save()
@@ -340,11 +290,9 @@ class NotifyApprovedStudentsAPIView(APIView):
                             f"Здравствуйте, {app.student.first_name}! К сожалению, вам не было предоставлено место за {old_cost}. Вместо этого предоставляем место за {next_cost}."
                         )
                         transferred_app_ids.append(app.id)
-                        # Обновляем группы заявок
                         apps_by_cost[cost].remove(app)
                         apps_by_cost[next_cost].append(app)
 
-        # После перераспределения устанавливаем статус "awaiting_payment" для всех заявок и отправляем уведомления
         with transaction.atomic():
             for app in approved_applications:
                 app.status = "awaiting_payment"
@@ -364,14 +312,11 @@ class NotifyApprovedStudentsAPIView(APIView):
         )
 
 
-
-
-
 class PaymentConfirmationAPIView(APIView):
     permission_classes = [IsAdmin]
 
     def post(self, request, *args, **kwargs):
-        excel_file = request.FILES.get('excel_file')
+        excel_file = request.FILES.get('file') or request.FILES.get('excel_file')
         if not excel_file:
             return Response(
                 {"detail": "Excel-файл обязателен для проверки данных студентов."},
@@ -382,69 +327,73 @@ class PaymentConfirmationAPIView(APIView):
             df = pd.read_excel(excel_file)
         except Exception as e:
             return Response(
-                {"detail": f"Ошибка при чтении Excel-файла: {str(e)}"},
+                {"detail": f"Ошибка при чтении Excel-файла: {e}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        df.columns = (
+            df.columns
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .str.replace(r'\s+', '_', regex=True)
+        )
 
         valid_payments = {}
         for _, row in df.iterrows():
-            raw_iin = row.get('iin') or row.get('ИИН')
+            raw_iin = row.get('iin') or row.get('иин')
             if pd.isna(raw_iin):
                 continue
-            iin = str(raw_iin).strip()
+            if isinstance(raw_iin, (int, float)):
+                iin = str(int(raw_iin)).zfill(12)
+            else:
+                iin = str(raw_iin).strip().zfill(12)
 
-            paid = row.get('Оплачено')
-            if pd.isna(paid):
+            raw_paid = row.get('оплачено')
+            if pd.isna(raw_paid):
                 continue
-            paid_amount = float(paid)
 
-            valid_payments[iin] = paid_amount
+            paid_int = int(round(float(raw_paid)))
+            valid_payments[iin] = paid_int
+
+        for iin, paid in valid_payments.items():
+            print(f"  IIN={iin} paid={paid}")
 
         approved_apps = Application.objects.filter(
             approval=True,
             payment_screenshot__isnull=False
-        ).exclude(payment_screenshot="")
+        ).exclude(payment_screenshot='')
 
         added_students = []
         with transaction.atomic():
             for app in approved_apps:
-                student = app.student
-                student_iin = str(student.iin).strip() if student.iin else None
+                student_iin = str(app.student.iin or '').strip().zfill(12)
 
-                if not student_iin or student_iin not in valid_payments:
+                if student_iin not in valid_payments:
                     continue
 
-                excel_paid = valid_payments[student_iin]
+                paid_int = valid_payments[student_iin]
+                cost = app.dormitory_cost
+                is_full = (paid_int == cost)
 
-                if excel_paid == app.dormitory_cost:
-                    app.is_full_payment = True
-                elif excel_paid == (app.dormitory_cost / 2):
-                    app.is_full_payment = False
-                else:
-                    app.is_full_payment = None
+                Application.objects.filter(pk=app.pk).update(
+                    is_full_payment=is_full,
+                    status='awaiting_order'
+                )
 
-                app.status = 'awaiting_order'
-                app.save()
-
-                if app.is_full_payment is not None:
-                    created = StudentInDorm.objects.filter(
-                        student_id=student,
-                        application_id=app
-                    ).exists()
-                    if not created:
-                        StudentInDorm.objects.create(
-                            student_id=student,
-                            dorm_id=None,
-                            group=None,
-                            application_id=app,
-                        )
-                        added_students.append({
-                            "student_iin": student_iin,
-                            "application_id": app.id,
-                            "paid": excel_paid
-                        })
-
+                if not StudentInDorm.objects.filter(application=app).exists():
+                    record = StudentInDorm.objects.create(
+                        student=app.student,
+                        application=app,
+                        room=None,
+                        group=None
+                    )
+                    added_students.append({
+                        "student_iin": student_iin,
+                        "application_id": app.id,
+                        "paid": paid_int,
+                        "is_full_payment": is_full
+                    })
         return Response(
             {
                 "detail": "Оплата подтверждена на основании колонки «Оплачено».",
@@ -454,193 +403,215 @@ class PaymentConfirmationAPIView(APIView):
         )
 
 
-
-
 class DistributeStudentsAPIView2(APIView):
     permission_classes = [IsAdmin]
 
     def post(self, request, *args, **kwargs):
-        # 1. Берём только те записи StudentInDorm,
-        #    где связанная заявка в status='waiting_order' и dorm ещё не назначен
-        pending_records = StudentInDorm.objects.filter(
-            application_id__status='waiting_order',
-            dorm_id__isnull=True
+        base_qs = Application.objects.filter(
+            status='awaiting_order',
+            approval=True
         )
-        if not pending_records.exists():
+        pending_qs = base_qs.filter(
+            Q(dorm_assignment__isnull=True)
+            | Q(dorm_assignment__room__isnull=True)
+        ).select_related('student')
+
+        if not pending_qs.exists():
             return Response(
-                {"detail": "Нет студентов, ожидающих распределения по общежитиям."},
-                status=200
+                {"detail": "Нет студентов, ожидающих распределения."},
+                status=status.HTTP_200_OK
             )
 
-        # 2. Группируем записи по стоимости (dormitory_cost берётся из Application)
-        cost_to_records = defaultdict(list)
-        for rec in pending_records:
-            cost = rec.application_id.dormitory_cost
-            cost_to_records[cost].append(rec)
+        cost_to_apps = defaultdict(list)
+        for app in pending_qs:
+            cost_to_apps[app.dormitory_cost].append(app)
 
         allocated_students = []
         group_counter = 1
 
         with transaction.atomic():
-            for cost, records in cost_to_records.items():
-                # выбираем все общежития с этой стоимостью
-                dorms_for_cost = Dorm.objects.filter(cost=cost)
-                if not dorms_for_cost:
+            for cost, apps in cost_to_apps.items():
+                dorms = Dorm.objects.filter(cost=cost)
+                if not dorms.exists():
                     continue
 
-                for dorm in dorms_for_cost:
-                    # собираем список доступных слотов по комнатам
-                    slots = []
-                    slots += [2] * (dorm.rooms_for_two or 0)
-                    slots += [3] * (dorm.rooms_for_three or 0)
-                    slots += [4] * (dorm.rooms_for_four or 0)
-                    if not slots:
-                        continue
+                priority_apps = [a for a in apps if a.needs_low_floor]
+                normal_apps = [a for a in apps if not a.needs_low_floor]
 
-                    # оставшиеся неподразмещённые записи
-                    remaining = [r for r in records if r.dorm_id is None]
-                    if not remaining:
-                        continue
+                group_counter = self._assign_group(
+                    priority_apps, dorms, group_counter,
+                    allocated_students,
+                    floor_max=2
+                )
 
-                    # разделяем по полу
-                    male = [r for r in remaining if r.student_id.gender and r.student_id.gender.upper() == 'M']
-                    female = [r for r in remaining if r.student_id.gender and r.student_id.gender.upper() == 'F']
-
-                    # пытаемся заполнить каждый слот
-                    for size in sorted(slots):
-                        pool, gender = None, None
-                        if len(male) >= size and len(female) >= size:
-                            pool, gender = (male, 'M') if len(male) >= len(female) else (female, 'F')
-                        elif len(male) >= size:
-                            pool, gender = male, 'M'
-                        elif len(female) >= size:
-                            pool, gender = female, 'F'
-                        else:
-                            continue
-
-                        group = self.allocate_slot(pool, size)
-                        if not group:
-                            continue
-
-                        for rec in group:
-                            # убираем из пулов выбранных
-                            if gender == 'M':
-                                male.remove(rec)
-                            else:
-                                female.remove(rec)
-
-                            rec.dorm_id = dorm
-                            rec.group = str(group_counter)
-                            rec.save()
-
-                            allocated_students.append({
-                                "student_email": rec.student_id.email,
-                                "dorm_name": dorm.name,
-                                "group": rec.group
-                            })
-                        group_counter += 1
-
-                    # если после основных слотов остались студенты, распределяем их по тем же принципам
-                    for pool in (male, female):
-                        if not pool:
-                            continue
-                        label = str(group_counter)
-                        for rec in pool:
-                            rec.dorm_id = dorm
-                            rec.group = label
-                            rec.save()
-                            allocated_students.append({
-                                "student_email": rec.student_id.email,
-                                "dorm_name": dorm.name,
-                                "group": rec.group
-                            })
-                        group_counter += 1
+                group_counter = self._assign_group(
+                    normal_apps, dorms, group_counter,
+                    allocated_students,
+                    floor_max=None
+                )
 
         return Response({
-            "detail": "Студенты успешно распределены по общежитиям и группам.",
+            "detail": "Студенты успешно распределены по корпусам и комнатам.",
             "allocated_students": allocated_students
-        }, status=200)
+        }, status=status.HTTP_200_OK)
+
+    def _assign_group(
+            self, apps, dorms, start_group_counter,
+            allocated_students, floor_max=None
+    ):
+
+        group_counter = start_group_counter
+
+        male = [a for a in apps if a.student.gender and a.student.gender.upper() == 'M']
+        female = [a for a in apps if a.student.gender and a.student.gender.upper() == 'F']
+
+        for dorm in dorms:
+            rooms_qs = Room.objects.filter(dorm=dorm).annotate(
+                occupied=Count('room_occupants')
+            ).order_by('-capacity', 'number')
+
+            if floor_max is not None:
+                rooms = [r for r in rooms_qs if r.floor and r.floor <= floor_max]
+            else:
+                rooms = list(rooms_qs)
+
+            for room in rooms:
+                free = room.capacity - room.occupied
+                if free <= 0:
+                    continue
+
+                if len(male) >= free and len(female) >= free:
+                    pool = male if len(male) >= len(female) else female
+                elif len(male) >= free:
+                    pool = male
+                elif len(female) >= free:
+                    pool = female
+                else:
+                    continue
+
+                group = self.allocate_slot(pool, free)
+                if not group:
+                    continue
+
+                for app in group:
+                    pool.remove(app)
+                    rec, created = StudentInDorm.objects.update_or_create(
+                        application=app,
+                        defaults={
+                            'student': app.student,
+                            'room': room,
+                            'group': str(group_counter),
+                        }
+                    )
+                    if created:
+                        allocated_students.append({
+                            "student_email": app.student.email,
+                            "dorm_name": dorm.name,
+                            "room_number": room.number,
+                            "group": str(group_counter)
+                        })
+
+                group_counter += 1
+
+        leftovers = male + female
+        if leftovers:
+            rooms_qs = Room.objects.filter(dorm__in=dorms).annotate(
+                occupied=Count('room_occupants')
+            ).filter(
+                occupied__lt=F('capacity')
+            ).order_by('-capacity', 'number')
+
+            if floor_max is not None:
+                free_rooms = [r for r in rooms_qs if r.floor and r.floor <= floor_max]
+            else:
+                free_rooms = list(rooms_qs)
+
+            for room in free_rooms:
+                free = room.capacity - room.occupied
+                for _ in range(free):
+                    if not leftovers:
+                        break
+                    app = leftovers.pop(0)
+                    rec, created = StudentInDorm.objects.update_or_create(
+                        application=app,
+                        defaults={
+                            'student': app.student,
+                            'room': room,
+                            'group': str(group_counter),
+                        }
+                    )
+                    if created:
+                        allocated_students.append({
+                            "student_email": app.student.email,
+                            "dorm_name": room.dorm.name,
+                            "room_number": room.number,
+                            "group": str(group_counter)
+                        })
+                group_counter += 1
+
+        return group_counter
 
     def allocate_slot(self, candidate_pool, slot_size):
-        """
-        Пытаемся собрать группу заданного размера:
-        1) Сначала по test_result
-        2) Внутри — по языковому ответу (test_answers)
-        3) Если не получается — берём из самой большой группы и дополняем другими
-        """
+
         if len(candidate_pool) < slot_size:
             return None
 
-        # Группируем по результату теста
         groups = defaultdict(list)
-        for rec in candidate_pool:
-            tr = rec.application_id.test_result
-            groups[tr].append(rec)
+        for app in candidate_pool:
+            groups[app.test_result].append(app)
 
-        # Ищём внутри каждой группы подходящую по языку
-        for tr, recs in groups.items():
-            if len(recs) >= slot_size:
-                # группируем по языковому ответу
-                langs = defaultdict(list)
-                for r in recs:
-                    ans = r.application_id.test_answers
-                    lang = self.get_language_from_record(ans)
-                    langs[lang].append(r)
-                # пытаемся по конкретному языку
-                for lang in ('A', 'B'):
-                    if len(langs.get(lang, [])) >= slot_size:
-                        return langs[lang][:slot_size]
-                # иначе просто возвращаем первые slot_size из этой группы
-                return recs[:slot_size]
+        for _, apps in groups.items():
+            if len(apps) < slot_size:
+                continue
 
-        # Если ни по одной группе по test_result не сработало,
-        # берём из самой крупной группы и докидываем остальных
-        sorted_groups = sorted(groups.items(), key=lambda x: len(x[1]), reverse=True)
-        top_recs = sorted_groups[0][1]
-        allocated = top_recs[:]
-        remaining_needed = slot_size - len(allocated)
-        rest = [r for r in candidate_pool if r not in allocated]
-        if len(rest) < remaining_needed:
+            langs = defaultdict(list)
+            for app in apps:
+                answers = app.test_answers
+                if isinstance(answers, str):
+                    try:
+                        answers = json.loads(answers)
+                    except json.JSONDecodeError:
+                        answers = []
+                lang = answers[0] if isinstance(answers, list) and answers else None
+                langs[lang].append(app)
+
+            for code in ('A', 'B'):
+                if len(langs.get(code, [])) >= slot_size:
+                    return langs[code][:slot_size]
+            return apps[:slot_size]
+
+        sorted_groups = sorted(groups.values(), key=len, reverse=True)
+        top_group = sorted_groups[0]
+        selected = top_group[:]
+        need = slot_size - len(selected)
+        rest = [app for app in candidate_pool if app not in selected]
+        if len(rest) < need:
             return None
-        allocated.extend(rest[:remaining_needed])
-        return allocated if len(allocated) == slot_size else None
-
-    def get_language_from_record(self, test_answers):
-        """
-        Извлекает первый ответ из test_answers:
-        - если строка — парсим JSON
-        - если список — берём первый элемент
-        """
-        try:
-            answers = test_answers
-            if isinstance(answers, str):
-                answers = json.loads(answers)
-            if isinstance(answers, list) and answers:
-                return answers[0]
-        except Exception:
-            pass
-        return None
-
+        selected.extend(rest[:need])
+        return selected if len(selected) == slot_size else None
 
 
 class IssueOrderAPIView(APIView):
-    permission_classes = [IsAdmin]
+    permission_classes = [IsAdmin]  # или IsAdmin
 
     def post(self, request, *args, **kwargs):
-        # Выбираем все записи в StudentInDorm, у которых связанная заявка имеет статус "awaiting_order"
-        waiting_records = StudentInDorm.objects.filter(application_id__status='awaiting_order')
+        waiting_records = StudentInDorm.objects.filter(
+            application__status='awaiting_order'
+        ).select_related('application', 'student', 'room__dorm')
+
         processed_students = []
+
         for record in waiting_records:
-            # Обновляем статус заявки, связанной с данной записью
-            application = record.application_id
+            application = record.application
             application.status = 'order'
-            application.save()
+            application.save(update_fields=['status'])
 
-            student = record.student_id  # объект модели Student
-            dorm = record.dorm_id        # объект модели Dorm (возможно, может быть None, если общага не назначена)
+            student = record.student
             room = record.room
+            dorm = room.dorm if room else None
 
-            dorm_name = dorm.name if dorm is not None else "Не назначена"
+            dorm_name = dorm.name if dorm else "Не назначена"
+            room_number = room.number if room else "—"
 
             try:
                 send_mail(
@@ -648,29 +619,25 @@ class IssueOrderAPIView(APIView):
                     message=(
                         f"Поздравляем, вам выдан ордер на заселение в общежитие!\n"
                         f"Общежитие: {dorm_name}\n"
-                        f"Комната: {room}"
+                        f"Комната: {room_number}"
                     ),
                     from_email=settings.EMAIL_HOST_USER,
                     recipient_list=[student.email],
                     fail_silently=False,
                 )
             except Exception as e:
-                print(f"Ошибка отправки письма на {student.email}: {e}")
+                print(f"[IssueOrder] Ошибка отправки письма на {student.email}: {e}")
 
             processed_students.append({
                 "student_email": student.email,
                 "dorm_name": dorm_name,
-                "room": room
+                "room_number": room_number,
             })
 
-        return Response(
-            {
-                "detail": "Статусы обновлены и письма отправлены.",
-                "processed_students": processed_students
-            },
-            status=status.HTTP_200_OK
-        )
-
+        return Response({
+            "detail": "Статусы обновлены и письма отправлены.",
+            "processed_students": processed_students
+        }, status=status.HTTP_200_OK)
 
 
 class SendPartialPaymentReminderAPIView(APIView):
@@ -717,6 +684,7 @@ class SendPartialPaymentReminderAPIView(APIView):
             status=status.HTTP_200_OK
         )
 
+
 class ApproveStudentApplicationAPIView(APIView):
     permission_classes = [IsAdmin]
 
@@ -727,6 +695,7 @@ class ApproveStudentApplicationAPIView(APIView):
             return Response({"error": "Заявка с таким ID не найдена"}, status=status.HTTP_404_NOT_FOUND)
 
         application.status = "approved"
+        application.approval = True
         additional_notes = request.data.get("notes")
         if additional_notes:
             application.notes = additional_notes
@@ -739,10 +708,6 @@ class ApproveStudentApplicationAPIView(APIView):
         )
 
 
-
-
-
-
 class RejectStudentApplicationAPIView(APIView):
     permission_classes = [IsAdmin]
 
@@ -753,6 +718,7 @@ class RejectStudentApplicationAPIView(APIView):
             return Response({"error": "Заявка с таким ID не найдена"}, status=status.HTTP_404_NOT_FOUND)
 
         application.status = "rejected"
+        application.approval = False
         additional_notes = request.data.get("notes")
         if additional_notes:
             application.notes = additional_notes
@@ -763,6 +729,7 @@ class RejectStudentApplicationAPIView(APIView):
             {"message": "Заявка успешно отклонена", "application_id": application.id},
             status=status.HTTP_200_OK
         )
+
 
 class DeleteStudentApplicationAPIView(APIView):
     permission_classes = [IsAdmin]
@@ -777,10 +744,7 @@ class DeleteStudentApplicationAPIView(APIView):
         return Response({"message": "Заявка успешно удалена"}, status=status.HTTP_200_OK)
 
 
-
-
 class ExportStudentInDormExcelView(APIView):
-
     permission_classes = [IsAdmin]
 
     def get(self, request, *args, **kwargs):
@@ -820,9 +784,6 @@ class ExportStudentInDormExcelView(APIView):
         return response
 
 
-
-
-
 class AssignRoomAPIView(APIView):
     permission_classes = [IsAdmin]
 
@@ -857,9 +818,8 @@ class AssignRoomAPIView(APIView):
         )
 
 
-
 class ClearStudentInDormView(APIView):
-    permission_classes = [IsSuperAdmin]  # только админы
+    permission_classes = [IsSuperAdmin]
 
     def delete(self, request):
         deleted_count, _ = StudentInDorm.objects.all().delete()
@@ -868,14 +828,6 @@ class ClearStudentInDormView(APIView):
             status=status.HTTP_204_NO_CONTENT
         )
 
-
-
-
-from rest_framework import serializers, viewsets, permissions
-from django.contrib.contenttypes.models import ContentType
-from django.contrib.auth import get_user_model
-from django.core.cache import cache
-from django.db.models import Q
 
 User = get_user_model()
 
