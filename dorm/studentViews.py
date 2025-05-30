@@ -1,47 +1,17 @@
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
-from django.core.exceptions import ObjectDoesNotExist
-from rest_framework import viewsets, status, generics, filters, permissions, request
-from rest_framework.pagination import PageNumberPagination
+from rest_framework import status, generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
-import pandas as pd
-from thefuzz import process
-from datetime import datetime
-from .models import *
 from .serializers import *
 from collections import Counter
-from collections import defaultdict
-from rest_framework.generics import RetrieveUpdateAPIView
-from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework.exceptions import NotFound, PermissionDenied
-from django.contrib.auth import authenticate
-from django.http import HttpResponse, Http404, JsonResponse
-from io import BytesIO
-import openpyxl
-from django.http import FileResponse
 from django.shortcuts import get_object_or_404
-from django.views.generic import View
-from django.core.mail import send_mail
-from django.conf import settings
-from rest_framework.generics import ListAPIView
-from django.db.models import F, Case, When, Value, IntegerField, BooleanField
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Sum
 from django.db import transaction
-from collections import defaultdict
-import json
 from rest_framework.parsers import MultiPartParser, FormParser
-from rest_framework.generics import RetrieveAPIView
-
-
-from rest_framework.permissions import BasePermission
 import PyPDF2
-
-from .utils import *
-
-
+from rest_framework import permissions
 
 class IsStudent(IsAuthenticated):
     def has_permission(self, request, view):
@@ -49,10 +19,7 @@ class IsStudent(IsAuthenticated):
         return is_authenticated and hasattr(request.user, 'student')
 
 
-
-
 def extract_text_from_pdf(file_obj):
-
     text = ""
     try:
         reader = PyPDF2.PdfReader(file_obj)
@@ -62,6 +29,7 @@ def extract_text_from_pdf(file_obj):
     except Exception as e:
         text = ""
     return text
+
 
 class CreateApplicationView(APIView):
     permission_classes = [IsStudent]
@@ -77,7 +45,8 @@ class CreateApplicationView(APIView):
             return Response({"error": "Поле 'dormitory_cost' обязательно"}, status=status.HTTP_400_BAD_REQUEST)
 
         if not Dorm.objects.filter(cost=dormitory_cost).exists():
-            return Response({"error": "Общежитий с выбранной стоимостью не найдено"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Общежитий с выбранной стоимостью не найдено"},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         try:
             student = Student.objects.get(pk=student_id)
@@ -105,8 +74,8 @@ class CreateApplicationView(APIView):
 
                         keywords = evidence_type.keywords.all()
                         if keywords and not any(
-                            keyword.keyword.lower() in extracted_text.lower()
-                            for keyword in keywords
+                                keyword.keyword.lower() in extracted_text.lower()
+                                for keyword in keywords
                         ):
                             raise ValidationError(
                                 f"Загруженный файл для '{evidence_type.name}' не содержит необходимых ключевых слов."
@@ -118,7 +87,8 @@ class CreateApplicationView(APIView):
                             file=file
                         )
 
-                    evidence_types_with_auto_fill = EvidenceType.objects.exclude(auto_fill_field__isnull=True).exclude(auto_fill_field='')
+                    evidence_types_with_auto_fill = EvidenceType.objects.exclude(auto_fill_field__isnull=True).exclude(
+                        auto_fill_field='')
 
                     for evidence_type in evidence_types_with_auto_fill:
                         auto_field = evidence_type.auto_fill_field
@@ -144,9 +114,6 @@ class CreateApplicationView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-
-
-
 class ApplicationStatusView(APIView):
     permission_classes = [IsStudent]
 
@@ -162,7 +129,8 @@ class ApplicationStatusView(APIView):
 
         if application.status == 'approved':
             return Response({"status": "Ваша заявка одобрена, внесите оплату и прикрепите сюда чек.",
-                "payment_url": "http://127.0.0.1:8000/api/v1/upload_payment_screenshot/"}, status=status.HTTP_200_OK)
+                             "payment_url": "http://127.0.0.1:8000/api/v1/upload_payment_screenshot/"},
+                            status=status.HTTP_200_OK)
 
         if application.status == 'rejected':
             return Response({"status": "Ваша заявка была отклонена."}, status=status.HTTP_200_OK)
@@ -181,13 +149,10 @@ class ApplicationStatusView(APIView):
         room = student_in_dorm.room
 
         if application.status == 'order':
-            return Response({"status": f"Поздравляем! Вам выдан ордер в общежитие: {dormitory_name}, комната {room}"}, status=status.HTTP_200_OK)
+            return Response({"status": f"Поздравляем! Вам выдан ордер в общежитие: {dormitory_name}, комната {room}"},
+                            status=status.HTTP_200_OK)
 
         return Response({"error": "Неизвестный статус заявки"}, status=status.HTTP_400_BAD_REQUEST)
-
-
-
-
 
 
 class UploadPaymentScreenshotView(APIView):
@@ -212,12 +177,13 @@ class UploadPaymentScreenshotView(APIView):
         application.status = "awaiting_order"
         application.save()
 
-        return Response({"message": "Скрин оплаты успешно прикреплен, заявка принята. Ожидайте ордер."}, status=status.HTTP_200_OK)
-
+        return Response({"message": "Скрин оплаты успешно прикреплен, заявка принята. Ожидайте ордер."},
+                        status=status.HTTP_200_OK)
 
 
 class TestView(APIView):
     permission_classes = [IsStudent]
+
     def post(self, request):
         student_id = request.user.student.id
         try:
@@ -236,9 +202,8 @@ class TestView(APIView):
         application.test_result = most_common_letter
         application.save()
 
-        return Response({"message": "Ваша заявка принята", "result_letter": most_common_letter}, status=status.HTTP_200_OK)
-
-
+        return Response({"message": "Ваша заявка принята", "result_letter": most_common_letter},
+                        status=status.HTTP_200_OK)
 
 
 class StudentChatListView(generics.ListAPIView):
@@ -247,10 +212,6 @@ class StudentChatListView(generics.ListAPIView):
 
     def get_queryset(self):
         return Chat.objects.filter(student=self.request.user, is_active=True)
-
-
-
-
 
 
 class RequestAdminView(APIView):
@@ -299,7 +260,6 @@ class RequestAdminView(APIView):
         return Response({"status": "Операторы уведомлены"}, status=status.HTTP_200_OK)
 
 
-
 class AvatarUploadView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -313,8 +273,8 @@ class AvatarUploadView(APIView):
         student.avatar = avatar
         student.save()
 
-        return Response({'message': 'Аватар успешно обновлен.', 'avatar_url': student.avatar.url}, status=status.HTTP_200_OK)
-
+        return Response({'message': 'Аватар успешно обновлен.', 'avatar_url': student.avatar.url},
+                        status=status.HTTP_200_OK)
 
 
 class StudentApplicationUpdateView(APIView):

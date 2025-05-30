@@ -3,31 +3,25 @@ from .models import *
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 import bleach
-
 from .utils import calculate_application_score
+from auditlog.models import LogEntry
+from rest_framework import serializers
 
 
 def sanitize_string(value):
-    """Очищает строку от всех HTML-тегов"""
     return bleach.clean(value, tags=[], attributes={}, strip=True) if isinstance(value, str) else value
 
 
 def sanitize_data(data, serializer):
-    """
-    Рекурсивно очищает все строки в словаре data,
-    проходя по полям сериализатора
-    """
     for field_name, field in serializer.fields.items():
         if field_name not in data:
             continue
 
         value = data[field_name]
 
-        # Обычные строковые поля
         if isinstance(field, serializers.CharField) and isinstance(value, str):
             data[field_name] = sanitize_string(value)
 
-        # Вложенные сериализаторы
         elif isinstance(field, serializers.ListSerializer):
             if isinstance(value, list):
                 for item in value:
@@ -41,28 +35,22 @@ def sanitize_data(data, serializer):
 
 
 class SanitizedModelSerializer(serializers.ModelSerializer):
-    """
-    Базовый сериализатор, автоматически очищающий все строки от HTML
-    в обычных и вложенных полях.
-    """
-
     def validate(self, data):
         return sanitize_data(data, self)
 
 
 class StudentSerializer(SanitizedModelSerializer):
     region = serializers.PrimaryKeyRelatedField(queryset=Region.objects.all())
+
     class Meta:
         model = Student
         fields = '__all__'
-
 
 
 class GlobalSettingsSerializer(SanitizedModelSerializer):
     class Meta:
         model = GlobalSettings
         fields = ['allow_application_edit']
-
 
 
 class AdminSerializer(SanitizedModelSerializer):
@@ -102,17 +90,17 @@ class AdminSerializer(SanitizedModelSerializer):
         return instance
 
 
-
-
 class RegionSerializer(SanitizedModelSerializer):
     class Meta:
         model = Region
         fields = '__all__'
 
+
 class DormImageSerializer(SanitizedModelSerializer):
     class Meta:
         model = DormImage
         fields = ["id", "image"]
+
 
 class DormSerializer(SanitizedModelSerializer):
     images = DormImageSerializer(many=True, read_only=True)
@@ -121,16 +109,16 @@ class DormSerializer(SanitizedModelSerializer):
         model = Dorm
         fields = "__all__"
 
+
 class TestQuestionSerializer(SanitizedModelSerializer):
     class Meta:
         model = TestQuestion
         fields = "__all__"
 
 
-
-
-class ExcelUploadSerializer(SanitizedModelSerializer):
+class ExcelUploadSerializer(serializers.Serializer):
     file = serializers.FileField()
+
 
 class CustomTokenObtainSerializer(serializers.Serializer):
     s = serializers.CharField(required=False)
@@ -177,12 +165,13 @@ class MessageSerializer(SanitizedModelSerializer):
         fields = ['id', 'content', 'timestamp', 'sender_type']
 
     def get_sender_type(self, obj):
-        # Проверка, кто отправитель: студент или админ
         if hasattr(obj.sender, 'student'):
             return 'student'
         elif hasattr(obj.sender, 'admin') or obj.sender.is_staff or obj.sender.is_superuser:
             return 'admin'
         return 'unknown'
+
+
 class ChatSerializer(SanitizedModelSerializer):
     student = serializers.SerializerMethodField()
 
@@ -216,6 +205,7 @@ class QuestionAnswerSerializer(SanitizedModelSerializer):
         model = QuestionAnswer
         fields = '__all__'
 
+
 class KnowledgeBaseSerializer(SanitizedModelSerializer):
     class Meta:
         model = KnowledgeBase
@@ -223,7 +213,6 @@ class KnowledgeBaseSerializer(SanitizedModelSerializer):
 
 
 class EvidenceTypeSerializer(SanitizedModelSerializer):
-    # включаем m2m поле
     keywords = serializers.PrimaryKeyRelatedField(
         many=True,
         queryset=Keyword.objects.all()
@@ -281,8 +270,6 @@ class ApplicationEvidenceSerializer(SanitizedModelSerializer):
         fields = ['id', 'evidence_type_code', 'file', 'approved']
 
 
-
-
 class ApplicationSerializer(SanitizedModelSerializer):
     student = StudentSerializer(read_only=True)
     evidences = ApplicationEvidenceSerializer(many=True, required=False)
@@ -303,12 +290,11 @@ class ApplicationSerializer(SanitizedModelSerializer):
             'updated_at',
         ]
 
-
-
     def get_gpa(self, obj):
         if obj.student:
             return obj.student.gpa
         return None
+
     def get_score(self, obj):
         try:
             return calculate_application_score(obj)
@@ -337,22 +323,37 @@ class ApplicationSerializer(SanitizedModelSerializer):
         return instance
 
 
+class RoomSerializer(serializers.ModelSerializer):
+    dorm = DormSerializer(read_only=True)
 
-class StudentInDormSerializer(SanitizedModelSerializer):
-    student = StudentSerializer(source='student_id', read_only=True)
-    application = ApplicationSerializer(source='application_id', read_only=True)
-    dorm = DormSerializer(source='dorm_id', read_only=True)
+    class Meta:
+        model = Room
+        fields = (
+            'id',
+            'dorm',
+            'number',
+            'capacity',
+        )
+        read_only_fields = fields
+
+
+class StudentInDormSerializer(serializers.ModelSerializer):
+    student = StudentSerializer(read_only=True)
+    application = ApplicationSerializer(read_only=True)
+    room = RoomSerializer(read_only=True)
+    dorm = DormSerializer(read_only=True, source='room.dorm')
 
     class Meta:
         model = StudentInDorm
         fields = [
             'id',
             'student',
-            'dorm',
-            'group',
             'application',
+            'dorm',
+            'room',
+            'group',
             'order',
-            'room'
+            'assigned_at',
         ]
 
 
@@ -363,15 +364,9 @@ class KeywordSerializer(SanitizedModelSerializer):
         read_only_fields = ['id']
 
 
-
-from auditlog.models import LogEntry
-from rest_framework import serializers, viewsets, permissions
-
 class AuditLogSerializer(SanitizedModelSerializer):
-    # отдаём timestamp как есть (без source, DRF сам резолвит по имени)
     timestamp = serializers.DateTimeField(read_only=True)
 
-    # actor будем брать из связанного User и приводить к строке
     actor = serializers.SerializerMethodField()
     changes = serializers.JSONField(read_only=True)
 
@@ -388,9 +383,6 @@ class AuditLogSerializer(SanitizedModelSerializer):
         )
 
     def get_actor(self, obj):
-        # если пользователь был, вернём его имя или логин
         if obj.actor:
-            # можете заменить на obj.actor.get_full_name() или .username
             return str(obj.actor)
-        # иначе пометим как «system» или любой другой дефолт
         return 'system'

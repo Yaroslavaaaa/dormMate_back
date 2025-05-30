@@ -1,6 +1,8 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 import re
+from django.utils import timezone
+from django.conf import settings
 
 from django.contrib.auth.hashers import make_password
 
@@ -144,14 +146,32 @@ class Dorm(models.Model):
     description = models.TextField(blank=True, verbose_name="Описание")
     address = models.CharField(max_length=255, verbose_name="Адрес")
     total_places = models.PositiveIntegerField(verbose_name="Количество мест")
-    rooms_for_two = models.PositiveIntegerField(verbose_name="Количество комнат на 2")
-    rooms_for_three = models.PositiveIntegerField(verbose_name="Количество комнат на 3")
-    rooms_for_four = models.PositiveIntegerField(verbose_name="Количество комнат на 4")
     cost = models.PositiveIntegerField(verbose_name="Стоимость")
-
 
     def __str__(self):
         return self.name
+
+
+class Room(models.Model):
+    dorm = models.ForeignKey(Dorm, on_delete=models.CASCADE, related_name='rooms', verbose_name="Общежитие")
+    number = models.CharField(max_length=10, verbose_name="Номер комнаты", help_text="Например: 101, 101A, 202Б")
+    capacity = models.PositiveSmallIntegerField(verbose_name="Вместимость", help_text="2, 3 или 4")
+
+    class Meta:
+        unique_together = ('dorm', 'number')
+        ordering = ['dorm__name', 'number']
+
+    @property
+    def floor(self) -> int:
+        match = re.match(r"(\d+)", self.number)
+        if not match:
+            return 0
+        num = int(match.group(1))
+        return num // 100
+
+    def __str__(self):
+        return f"{self.dorm.name} — комн. {self.number} ({self.capacity}-мест.)"
+
 
 
 class DormImage(models.Model):
@@ -201,6 +221,10 @@ class EvidenceType(models.Model):
         help_text="Чем больше число, тем выше приоритет",
         verbose_name="Приоритет"
     )
+    special_housing = models.BooleanField(
+        default=False,
+        verbose_name="Заселять на 1–2 этаж"
+    )
     data_type = models.CharField(max_length=20, choices=DATA_TYPE_CHOICES, verbose_name="Тип данных")
     auto_fill_field = models.CharField(
         max_length=50, blank=True, null=True,
@@ -215,23 +239,10 @@ class EvidenceType(models.Model):
 
 
 
-
-
-
-
-
 class EvidenceKeyword(models.Model):
-    evidence_type = models.ForeignKey(
-        EvidenceType,
-        on_delete=models.CASCADE,
-        related_name='evidence_keywords',
-        related_query_name='evidence_keyword'  # Изменённое обратное имя для запросов
-    )
-    keyword = models.ForeignKey(
-        Keyword,
-        on_delete=models.CASCADE,
-        related_name='evidence_keywords'
-    )
+    evidence_type = models.ForeignKey(EvidenceType, on_delete=models.CASCADE,
+                                      related_name='evidence_keywords', related_query_name='evidence_keyword')
+    keyword = models.ForeignKey(Keyword, on_delete=models.CASCADE, related_name='evidence_keywords')
 
     def __str__(self):
         return f"{self.evidence_type.name} - {self.keyword.keyword}"
@@ -259,10 +270,7 @@ class Application(models.Model):
     payment_screenshot = models.FileField(upload_to='payments/', null=True, blank=True, verbose_name="Скрин оплаты")
     is_full_payment = models.BooleanField(null=True, blank=True, verbose_name="Полная оплата")
     parent_phone = models.CharField(max_length=20, null=True, blank=True, verbose_name="Телефон родителей")
-
-
     ent_result = models.PositiveIntegerField(null=True, blank=True, verbose_name="Результат ЕНТ")
-
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Время создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Время последнего обновления")
 
@@ -289,6 +297,13 @@ class Application(models.Model):
                 message=messages[new_status]
             )
 
+    @property
+    def needs_low_floor(self) -> bool:
+        return self.evidences.filter(
+            approved=True,
+            evidence_type__special_housing=True
+        ).exists()
+
 
     def __str__(self):
         return f"Заявка от {self.student}"
@@ -297,24 +312,29 @@ class Application(models.Model):
 
 
 
+class StudentInRoom(models.Model):
+    application = models.OneToOneField(Application, on_delete=models.CASCADE, related_name='assignment')
+    room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='occupants')
+    group = models.CharField(max_length=10, blank=True)
+    assigned_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        unique_together = ('application', 'room')
+
+    def __str__(self):
+        return f"{self.application.student} → {self.room}"
+
+
+
+
+
 class ApplicationEvidence(models.Model):
-    application = models.ForeignKey(
-        Application, on_delete=models.CASCADE, related_name='evidences',
-        verbose_name="Заявка"
-    )
-    evidence_type = models.ForeignKey(
-        EvidenceType, on_delete=models.CASCADE, verbose_name="Тип доказательства"
-    )
+    application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name='evidences',verbose_name="Заявка")
+    evidence_type = models.ForeignKey(EvidenceType, on_delete=models.CASCADE, verbose_name="Тип доказательства")
     file = models.FileField(upload_to='evidences/', null=True, blank=True, verbose_name="Файл доказательства")
-    numeric_value = models.DecimalField(
-        max_digits=6, decimal_places=2, null=True, blank=True,
-        verbose_name="Числовое значение"
-    )
-    approved = models.BooleanField(
-        null=True, blank=True,
-        verbose_name="Одобрено",
-        help_text="Если True – справка одобрена, если False – отклонена, если None – не проверена"
-    )
+    numeric_value = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True,verbose_name="Числовое значение")
+    approved = models.BooleanField(null=True, blank=True, verbose_name="Одобрено",
+                                   help_text="Если True – справка одобрена, если False – отклонена, если None – не проверена")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Время создания")
 
     def __str__(self):
@@ -364,16 +384,22 @@ class QuestionAnswer(models.Model):
 
 
 class StudentInDorm(models.Model):
-    student_id = models.ForeignKey(Student, on_delete=models.CASCADE, verbose_name="student", related_name="Студент")
-    dorm_id = models.ForeignKey(Dorm, on_delete=models.CASCADE, verbose_name="dorm", related_name="Общежитие", null=True)
-    group = models.IntegerField(null=True, blank=True, verbose_name="Группа")
-    application_id = models.ForeignKey(Application, on_delete=models.CASCADE, verbose_name="application", related_name="Заявление")
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, verbose_name="Студент", related_name="in_dorm_assignments", null=True)
+    application = models.OneToOneField('dorm.Application', on_delete=models.CASCADE, verbose_name="Заявление",
+                                       related_name="dorm_assignment", null=True)
+    room = models.ForeignKey('dorm.Room', on_delete=models.CASCADE, verbose_name="Комната",
+                             related_name="room_occupants", null=True, blank=True)
+    group = models.CharField(max_length=10, null=True, blank=True, verbose_name="Группа")
     order = models.ImageField(upload_to='orders/', null=True, blank=True, verbose_name="Ордер")
-    room = models.CharField(max_length=10, null=True, blank=True, verbose_name="Комната")
+    assigned_at = models.DateTimeField(default=timezone.now, verbose_name="Время расселения")
+
+    class Meta:
+        unique_together = ('application', 'room')
+        verbose_name = "Назначение студента в комнату"
+        verbose_name_plural = "Назначения студентов"
 
     def __str__(self):
-        return f"{self.student_id}"
-
+        return f"{self.student} → {self.room or '— не назначен'}"
 
 
 class KnowledgeBase(models.Model):
@@ -388,10 +414,7 @@ class KnowledgeBase(models.Model):
 
 
 class GlobalSettings(models.Model):
-    allow_application_edit = models.BooleanField(
-        default=False,
-        verbose_name="Студентам разрешено редактировать заявки"
-    )
+    allow_application_edit = models.BooleanField(default=False, verbose_name="Студентам разрешено редактировать заявки")
 
     def save(self, *args, **kwargs):
         self.pk = 1

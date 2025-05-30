@@ -4,12 +4,33 @@ from django.http import HttpResponse
 
 from .models import *
 
-# Register your models here.
+
+
+
+class RoomInline(admin.TabularInline):
+    model = Room
+    extra = 1
+    fields = ('number', 'capacity')
+    verbose_name = "Комната"
+    verbose_name_plural = "Комнаты"
+
+
+@admin.register(Room)
+class RoomAdmin(admin.ModelAdmin):
+    list_display = ('dorm', 'number', 'capacity', 'occupied_places')
+    list_filter = ('dorm__name',)
+    search_fields = ('number', 'dorm__name')
+
+    def occupied_places(self, obj):
+        return obj.occupants.count()
+
+    occupied_places.short_description = 'Занято мест'
 
 
 class EvidenceKeywordInline(admin.TabularInline):
     model = EvidenceKeyword
-    extra = 1  # Количество дополнительных пустых форм
+    extra = 1
+
 
 @admin.register(EvidenceType)
 class EvidenceTypeAdmin(admin.ModelAdmin):
@@ -17,31 +38,41 @@ class EvidenceTypeAdmin(admin.ModelAdmin):
     search_fields = ('name', 'code')
     inlines = [EvidenceKeywordInline]
 
+
 @admin.register(Keyword)
 class KeywordAdmin(admin.ModelAdmin):
     list_display = ('keyword',)
     search_fields = ('keyword',)
 
+
 @admin.register(ApplicationEvidence)
 class ApplicationEvidenceAdmin(admin.ModelAdmin):
     list_display = ('application', 'evidence_type', 'created_at')
     list_filter = ('evidence_type',)
+
+
 admin.site.register(Student)
 admin.site.register(Admin)
 admin.site.register(User)
+
+
 class DormImageInline(admin.TabularInline):
     model = DormImage
-    extra = 1 
+    extra = 1
+
 
 @admin.register(Dorm)
 class DormAdmin(admin.ModelAdmin):
-    inlines = [DormImageInline]
+    inlines = [DormImageInline, RoomInline]
+
 
 admin.site.register(DormImage)
 admin.site.register(Application)
 admin.site.register(Region)
 admin.site.register(TestQuestion)
 admin.site.register(QuestionAnswer)
+
+
 def export_students_in_dorm_to_excel(modeladmin, request, queryset):
     data = []
     for student in queryset:
@@ -62,12 +93,17 @@ def export_students_in_dorm_to_excel(modeladmin, request, queryset):
 
     return response
 
+
 export_students_in_dorm_to_excel.short_description = "Выгрузить выбранные записи в Excel"
+
 
 @admin.register(StudentInDorm)
 class StudentInDormAdmin(admin.ModelAdmin):
-    list_display = ('student_id', 'dorm_id', 'room', 'application_id', 'order')
-    actions = [export_students_in_dorm_to_excel]
+    list_display = ('student', 'application', 'room', 'group', 'assigned_at')
+    list_filter = ('room__dorm', 'group')
+    search_fields = ('student__email', 'room__number', 'application__student__email')
+    ordering = ('-assigned_at',)
+
 
 class ApplicationAdmin(admin.ModelAdmin):
     list_display = (
@@ -133,8 +169,6 @@ class KnowledgeBaseAdmin(admin.ModelAdmin):
     search_fields = ('question_keywords', 'answer')
 
 
-
-
 @admin.register(GlobalSettings)
 class GlobalSettingsAdmin(admin.ModelAdmin):
     list_display = ('id', 'allow_application_edit')
@@ -146,9 +180,3 @@ class GlobalSettingsAdmin(admin.ModelAdmin):
             'description': 'Глобальная настройка: разрешить ли студентам редактировать заявки'
         }),
     )
-
-    # def has_add_permission(self, request):
-    #     return False
-    #
-    # def has_delete_permission(self, request, obj=None):
-    #     return False
