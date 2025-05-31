@@ -103,9 +103,9 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'dormmate',
         'USER': 'postgres',
-        'PASSWORD': 'ya242004',
+        'PASSWORD': '1234',
         'HOST': 'localhost',
-        'PORT': '5434',
+        'PORT': '5433',
     }
 }
 
