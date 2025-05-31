@@ -362,7 +362,6 @@ class Message(models.Model):
     timestamp = models.DateTimeField(auto_now_add=True)
     is_from_bot = models.BooleanField(default=False)
     operator_requested_at = models.DateTimeField(null=True, blank=True)
-    objects = models.Manager()
 
     def __str__(self):
         return f"{self.sender} -> {self.receiver}: {self.content}"

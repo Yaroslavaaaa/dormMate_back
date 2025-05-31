@@ -18,7 +18,6 @@ from rest_framework.generics import RetrieveAPIView
 from django.db.models import Q
 from .utils import *
 from rest_framework import viewsets, permissions
-import requests
 
 
 class RegionListView(generics.ListAPIView):
@@ -269,7 +268,7 @@ class CreateChatView(APIView):
         if active_chat:
             return Response({"id": active_chat.id}, status=status.HTTP_200_OK)
 
-        new_chat = Chat.objects.create(student=student)
+        new_chat = Chat.objects.create(student=student, is_active=True, status='waiting_for_admin')
         return Response({"id": new_chat.id}, status=status.HTTP_201_CREATED)
 
 
@@ -334,87 +333,72 @@ class ChatListView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-
 class SendMessageView(APIView):
     permission_classes = [IsStudentOrAdmin]
 
     def post(self, request, chat_id):
         chat = get_object_or_404(Chat, id=chat_id, is_active=True)
         text = request.data.get('text')
-
         if not text:
             return Response({"error": "Сообщение не может быть пустым"}, status=status.HTTP_400_BAD_REQUEST)
 
         sender = request.user
         receiver = chat.student if sender.is_staff else User.objects.filter(is_staff=True).first()
 
-        # Сохраняем сообщение от пользователя
         Message.objects.create(chat=chat, sender=sender, receiver=receiver, content=text)
 
-        # Если пишет студент — обрабатываем ИИ
         if not sender.is_staff:
-            # Если оператор уже подключён — бот не отвечает
+
             if chat.is_operator_connected:
                 return Response({"status": "Сообщение отправлено"}, status=status.HTTP_201_CREATED)
 
-            # 🔗 Обращение к ИИ
-            try:
-                ai_response = requests.post(
-                    "https://a7ssmm.pythonanywhere.com/chat",
-                    json={"question": text},
-                    timeout=20
+            ai_answer = find_best_answer(text)
+
+            if ai_answer:
+                bot_user, _ = User.objects.get_or_create(
+                    s="F22016183",
+                    defaults={
+                        "first_name": "DormMateBot",
+                        "is_staff": True,
+                        "is_active": True,
+                        "password": "pbkdf2_sha256$260000$fakebotpassword$fakehashedpassword"  # можно указать любой
+                    }
                 )
+                Message.objects.create(
+                    chat=chat,
+                    sender=bot_user,
+                    receiver=sender,
+                    content=ai_answer
+                )
+                return Response({"status": "Ответ сгенерирован ботом"}, status=status.HTTP_201_CREATED)
+            else:
+                admin = User.objects.filter(is_staff=True).first()
 
-                if ai_response.status_code == 200 and ai_response.json().get("answer"):
-                    ai_answer = ai_response.json()["answer"].strip()
-                    confidence = ai_response.json().get("confidence", 0.0)
-
-                    if ai_answer and len(ai_answer) > 5:
-                        bot_user, _ = User.objects.get_or_create(
-                            s="F22016183",
-                            defaults={
-                                "first_name": "DormMateBot",
-                                "is_staff": True,
-                                "is_active": True,
-                                "phone_number": "00000000001",
-                                "password": "pbkdf2_sha256$260000$fakebotpassword$fakehashedpassword"
-                            }
-                        )
-
-                        Message.objects.create(
-                            chat=chat,
-                            sender=bot_user,
-                            receiver=sender,
-                            content=ai_answer,
-                            is_from_bot=True
-                        )
-
-                        return Response({"status": "Ответ сгенерирован ботом"}, status=status.HTTP_201_CREATED)
-
-            except Exception as e:
-                print("Ошибка запроса к ИИ:", e)
-
-            # Если бот не справился → уведомляем оператора
-            admin = User.objects.filter(is_staff=True).first()
-
-            if admin:
                 Notification.objects.create(
                     recipient=admin,
                     message=f"Новый вопрос в чате #{chat.id}, требуется участие оператора."
                 )
 
-                Message.objects.create(
-                    chat=chat,
-                    sender=admin,
-                    receiver=sender,
-                    content="Здравствуйте! Я подключаюсь к вам как оператор. Чем могу помочь?",
-                    is_from_bot=True
+                system_user, _ = User.objects.get_or_create(
+                    s="SYSTEM",
+                    defaults={
+                        "first_name": "System",
+                        "is_staff": True,
+                        "is_active": True,
+                        "password": "pbkdf2_sha256$260000$systempassword$fakehashedsystempassword"
+                    }
                 )
 
-            return Response({"status": "Оператор уведомлён, бот не смог ответить"}, status=status.HTTP_200_OK)
+                Message.objects.create(
+                    chat=chat,
+                    sender=system_user,
+                    receiver=sender,
+                    content="Ваш вопрос сложный! Оператор скоро подключится и поможет вам."
+                )
+
+                return Response({"status": "Оператор уведомлён, бот не смог ответить"}, status=status.HTTP_200_OK)
 
         return Response({"status": "Сообщение отправлено"}, status=status.HTTP_201_CREATED)
-
 
 
 class EndChatView(APIView):
