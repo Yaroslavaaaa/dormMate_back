@@ -17,7 +17,7 @@ class RoomInline(admin.TabularInline):
 
 @admin.register(Room)
 class RoomAdmin(admin.ModelAdmin):
-    list_display = ('dorm', 'number', 'capacity', 'occupied_places')
+    list_display = ('dorm', 'number', 'capacity', 'occupied_places', 'floor')
     list_filter = ('dorm__name',)
     search_fields = ('number', 'dorm__name')
 
@@ -54,6 +54,7 @@ class ApplicationEvidenceAdmin(admin.ModelAdmin):
 admin.site.register(Student)
 admin.site.register(Admin)
 admin.site.register(User)
+admin.site.register(StudentInRoom)
 
 
 class DormImageInline(admin.TabularInline):

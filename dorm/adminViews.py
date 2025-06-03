@@ -856,11 +856,41 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         return (
             LogEntry.objects
             .filter(actor_id__in=self.get_allowed_user_ids())
-            .select_related('actor')
+            .select_related('actor', 'content_type')
             .only(
                 'id',
                 'actor_id',
                 'action',
                 'timestamp',
+                'content_type_id',
+                'object_id',
+                'object_repr',
+                'changes',
+                # Поля для content_type
+                'content_type__app_label',
+                'content_type__model',
+                # Поля для actor
+                'actor__first_name',
+                'actor__last_name',
             )
         )
+
+
+
+class DormFloorsCountAPIView(APIView):
+    """
+    GET /api/v1/dorms/<pk>/floors_count/
+    возвращает количество этажей для общежития с заданным pk.
+    """
+
+    def get(self, request, pk, *args, **kwargs):
+        try:
+            dorm = Dorm.objects.get(pk=pk)
+        except Dorm.DoesNotExist:
+            return Response(
+                {"detail": "Общежитие не найдено."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        count = dorm.floors_count()
+        return Response({"floors_count": count}, status=status.HTTP_200_OK)

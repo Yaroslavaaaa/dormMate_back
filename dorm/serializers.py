@@ -104,6 +104,7 @@ class DormImageSerializer(SanitizedModelSerializer):
 
 class DormSerializer(SanitizedModelSerializer):
     images = DormImageSerializer(many=True, read_only=True)
+    floors_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Dorm
@@ -325,6 +326,8 @@ class ApplicationSerializer(SanitizedModelSerializer):
 
 class RoomSerializer(serializers.ModelSerializer):
     dorm = DormSerializer(read_only=True)
+    assigned_students = serializers.SerializerMethodField(read_only=True)
+    free_spots = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Room
@@ -333,14 +336,39 @@ class RoomSerializer(serializers.ModelSerializer):
             'dorm',
             'number',
             'capacity',
+            'floor',
+            'assigned_students',
+            'free_spots',
         )
         read_only_fields = fields
 
+    def get_assigned_students(self, room: Room):
+        assignments = room.room_occupants.select_related('student').all()
+        result = []
+        for assign in assignments:
+            stu = assign.student
+            if stu:
+                fio = f"{stu.last_name} {stu.first_name} {stu.middle_name or ''}".strip()
+                result.append({
+                    "id": assign.id,
+                    "fio": fio
+                })
+        return result
+
+    def get_free_spots(self, room: Room):
+        occupied_count = room.room_occupants.count()
+        free = room.capacity - occupied_count
+        return free if free >= 0 else 0
 
 class StudentInDormSerializer(serializers.ModelSerializer):
     student = StudentSerializer(read_only=True)
     application = ApplicationSerializer(read_only=True)
-    room = RoomSerializer(read_only=True)
+    # Эта строчка была read_only=True, убираем, чтобы разрешить PATCH
+    room = serializers.PrimaryKeyRelatedField(
+        queryset=Room.objects.all(),
+        allow_null=True,
+        required=False
+    )
     dorm = DormSerializer(read_only=True, source='room.dorm')
 
     class Meta:
@@ -364,25 +392,54 @@ class KeywordSerializer(SanitizedModelSerializer):
         read_only_fields = ['id']
 
 
-class AuditLogSerializer(SanitizedModelSerializer):
-    timestamp = serializers.DateTimeField(read_only=True)
-
-    actor = serializers.SerializerMethodField()
-    changes = serializers.JSONField(read_only=True)
+class AuditLogSerializer(serializers.ModelSerializer):
+    actor_name = serializers.SerializerMethodField()
+    model_name = serializers.SerializerMethodField()
+    model_verbose_name = serializers.SerializerMethodField()
+    action_type = serializers.SerializerMethodField()
 
     class Meta:
         model = LogEntry
-        fields = (
+        fields = [
             'id',
             'timestamp',
-            'actor',
+            'actor_name',
             'action',
+            'action_type',
             'content_type',
+            'model_name',
+            'model_verbose_name',
+            'object_id',
             'object_repr',
             'changes',
-        )
+        ]
 
-    def get_actor(self, obj):
+    def get_actor_name(self, obj):
         if obj.actor:
-            return str(obj.actor)
-        return 'system'
+            return f"{obj.actor.first_name} {obj.actor.last_name}".strip() or "actor"
+        return "Система"
+
+    def get_model_name(self, obj):
+        """Возвращает техническое название модели"""
+        if obj.content_type:
+            return obj.content_type.model
+        return None
+
+    def get_model_verbose_name(self, obj):
+        """Возвращает человекочитаемое название модели"""
+        if obj.content_type:
+            model_class = obj.content_type.model_class()
+            if model_class:
+                return model_class._meta.verbose_name
+        return None
+
+    def get_action_type(self, obj):
+        """Возвращает тип действия в человекочитаемом формате"""
+        action_mapping = {
+            0: 'Создание',
+            1: 'Изменение',
+            2: 'Удаление',
+        }
+        return action_mapping.get(obj.action, f'Неизвестное действие (код: {obj.action})')
+
+

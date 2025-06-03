@@ -16,6 +16,10 @@ router.register(r'admins', AdminViewSet, basename='admin')
 router.register(r'keywords', KeywordViewSet, basename='keyword')
 router.register(r'evidence-types', EvidenceTypeViewSet, basename='evidencetype')
 router.register(r'audit-log', AuditLogViewSet, basename='audit-log')
+router.register(r'apps', AppsViewSet, basename='apps')
+router.register(r'rooms', RoomViewSet, basename='room')
+router.register(r'student-in-dorm', StudentInDormViewSet, basename='student-in-dorm')
+
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -45,7 +49,6 @@ urlpatterns = [
          name='partial_payment_reminder'),
     path('api/v1/generate-selection/', GenerateSelectionAPIView.as_view(), name='generate-selection'),
     path('api/v1/notify-approved/', NotifyApprovedStudentsAPIView.as_view(), name='notify-approved'),
-    path('api/v1/student-in-dorm/', StudentInDormView.as_view(), name='student-in-dorm'),
     path('api/v1/payment-confirmation/', PaymentConfirmationAPIView.as_view(), name='payment-confirmation'),
     path('api/v1/assign-room/', AssignRoomAPIView.as_view(), name='assign_room'),
     path('api/v1/upload-excel/', ExcelUploadView.as_view()),
@@ -60,6 +63,7 @@ urlpatterns = [
 
     # dorms
     path('api/v1/dorms/costs/', DormCostListView.as_view(), name='dorm-cost-list'),
+    path('api/v1/dorms/<int:pk>/floors_count/', DormFloorsCountAPIView.as_view(), name='dorm-floors-count'),
 
     # all
 

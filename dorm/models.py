@@ -7,10 +7,8 @@ from django.conf import settings
 from django.contrib.auth.hashers import make_password
 
 
-
 class Region(models.Model):
     region_name = models.CharField(max_length=100, verbose_name="Область")
-
 
     def __str__(self):
         return f"{self.region_name}"
@@ -50,6 +48,7 @@ class UserManager(BaseUserManager):
 
 def avatar_upload_path(instance, filename):
     return f'avatar/{instance.s}_{filename}'
+
 
 class User(AbstractBaseUser, PermissionsMixin):
     GENDER_CHOICES = [
@@ -91,6 +90,7 @@ class User(AbstractBaseUser, PermissionsMixin):
             self.s = self.s.upper()
         super().save(*args, **kwargs)
 
+
 class Student(User):
     course = models.CharField(max_length=100)
     region = models.ForeignKey('Region', on_delete=models.CASCADE, verbose_name="Область")
@@ -106,6 +106,7 @@ class Student(User):
             raise ValueError(
                 'Student "s" must start with "S" followed by exactly eight digits, making it 9 characters long.')
         super().save(*args, **kwargs)
+
 
 class Admin(User):
     ROLE_SUPER = 'SUPER'
@@ -140,6 +141,9 @@ class Admin(User):
         super().save(*args, **kwargs)
 
 
+import re
+from django.db import models
+
 
 class Dorm(models.Model):
     name = models.CharField(max_length=255, verbose_name="Название")
@@ -151,27 +155,62 @@ class Dorm(models.Model):
     def __str__(self):
         return self.name
 
+    def floors_count(self) -> int:
+        """
+        Подсчитывает число уникальных этажей у этого общежития
+        по значению поля Room.floor.
+        """
+        return (
+            self.rooms
+            .values_list('floor', flat=True)  # забираем все floor для связанных комнат
+            .distinct()  # оставляем только уникальные значения
+            .count()  # считаем, сколько их
+        )
+
 
 class Room(models.Model):
-    dorm = models.ForeignKey(Dorm, on_delete=models.CASCADE, related_name='rooms', verbose_name="Общежитие")
-    number = models.CharField(max_length=10, verbose_name="Номер комнаты", help_text="Например: 101, 101A, 202Б")
-    capacity = models.PositiveSmallIntegerField(verbose_name="Вместимость", help_text="2, 3 или 4")
+    dorm = models.ForeignKey(
+        Dorm,
+        on_delete=models.CASCADE,
+        related_name='rooms',
+        verbose_name="Общежитие"
+    )
+    number = models.CharField(
+        max_length=10,
+        verbose_name="Номер комнаты",
+        help_text="Например: 101, 101A, 202Б"
+    )
+    capacity = models.PositiveSmallIntegerField(
+        verbose_name="Вместимость",
+        help_text="2, 3 или 4"
+    )
+
+    # Добавляем реальное поле floor
+    floor = models.PositiveSmallIntegerField(
+        verbose_name="Этаж",
+        editable=False,
+        default=0
+    )
 
     class Meta:
         unique_together = ('dorm', 'number')
         ordering = ['dorm__name', 'number']
 
-    @property
-    def floor(self) -> int:
-        match = re.match(r"(\d+)", self.number)
-        if not match:
-            return 0
-        num = int(match.group(1))
-        return num // 100
+    def save(self, *args, **kwargs):
+        """
+        При сохранении комнаты автоматически парсим первую
+        цифровую часть из номера и вычисляем этаж.
+        """
+        match = re.match(r"^(\d+)", self.number)
+        if match:
+            num = int(match.group(1))  # первая числовая группа, например "203" из "203A"
+            self.floor = num // 100  # 203 // 100 = 2 → 2-й этаж
+        else:
+            self.floor = 0  # нечитаемый формат номера
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.dorm.name} — комн. {self.number} ({self.capacity}-мест.)"
-
 
 
 class DormImage(models.Model):
@@ -180,7 +219,6 @@ class DormImage(models.Model):
 
     def __str__(self):
         return f"Фото для {self.dorm.name}"
-
 
 
 class TestQuestion(models.Model):
@@ -202,12 +240,12 @@ class TestQuestion(models.Model):
         return self.question_text
 
 
-
 class Keyword(models.Model):
     keyword = models.CharField(max_length=100, verbose_name="Ключевое слово")
 
     def __str__(self):
         return self.keyword
+
 
 class EvidenceType(models.Model):
     DATA_TYPE_CHOICES = [
@@ -231,12 +269,11 @@ class EvidenceType(models.Model):
         help_text="Название поля в Application или Student, откуда брать значение при отсутствии загруженного доказательства",
         verbose_name="Поле автозаполнения"
     )
-    keywords = models.ManyToManyField('Keyword', through='EvidenceKeyword', blank=True, null=True, verbose_name="Ключевые слова")
+    keywords = models.ManyToManyField('Keyword', through='EvidenceKeyword', blank=True, null=True,
+                                      verbose_name="Ключевые слова")
 
     def __str__(self):
         return self.code
-
-
 
 
 class EvidenceKeyword(models.Model):
@@ -246,7 +283,6 @@ class EvidenceKeyword(models.Model):
 
     def __str__(self):
         return f"{self.evidence_type.name} - {self.keyword.keyword}"
-
 
 
 class Application(models.Model):
@@ -304,12 +340,8 @@ class Application(models.Model):
             evidence_type__special_housing=True
         ).exists()
 
-
     def __str__(self):
         return f"Заявка от {self.student}"
-
-
-
 
 
 class StudentInRoom(models.Model):
@@ -325,23 +357,19 @@ class StudentInRoom(models.Model):
         return f"{self.application.student} → {self.room}"
 
 
-
-
-
 class ApplicationEvidence(models.Model):
-    application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name='evidences',verbose_name="Заявка")
+    application = models.ForeignKey(Application, on_delete=models.CASCADE, related_name='evidences',
+                                    verbose_name="Заявка")
     evidence_type = models.ForeignKey(EvidenceType, on_delete=models.CASCADE, verbose_name="Тип доказательства")
     file = models.FileField(upload_to='evidences/', null=True, blank=True, verbose_name="Файл доказательства")
-    numeric_value = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True,verbose_name="Числовое значение")
+    numeric_value = models.DecimalField(max_digits=6, decimal_places=2, null=True, blank=True,
+                                        verbose_name="Числовое значение")
     approved = models.BooleanField(null=True, blank=True, verbose_name="Одобрено",
                                    help_text="Если True – справка одобрена, если False – отклонена, если None – не проверена")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Время создания")
 
     def __str__(self):
         return f"{self.application.id} - {self.evidence_type.name}"
-
-
-
 
 
 class Chat(models.Model):
@@ -354,10 +382,12 @@ class Chat(models.Model):
     def __str__(self):
         return f"Chat {self.id} - {self.student}"
 
+
 class Message(models.Model):
     chat = models.ForeignKey(Chat, on_delete=models.CASCADE, related_name='messages')
     sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sent_messages')
-    receiver = models.ForeignKey(User, on_delete=models.CASCADE, related_name='received_messages', null=True, blank=True)
+    receiver = models.ForeignKey(User, on_delete=models.CASCADE, related_name='received_messages', null=True,
+                                 blank=True)
     content = models.TextField()
     timestamp = models.DateTimeField(auto_now_add=True)
     is_from_bot = models.BooleanField(default=False)
@@ -366,6 +396,7 @@ class Message(models.Model):
 
     def __str__(self):
         return f"{self.sender} -> {self.receiver}: {self.content}"
+
 
 class Notification(models.Model):
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
@@ -376,6 +407,7 @@ class Notification(models.Model):
     def __str__(self):
         return f"Notification for {self.recipient} at {self.created_at}"
 
+
 class QuestionAnswer(models.Model):
     question = models.TextField(unique=True)
     answer = models.TextField()
@@ -385,7 +417,8 @@ class QuestionAnswer(models.Model):
 
 
 class StudentInDorm(models.Model):
-    student = models.ForeignKey(Student, on_delete=models.CASCADE, verbose_name="Студент", related_name="in_dorm_assignments", null=True)
+    student = models.ForeignKey(Student, on_delete=models.CASCADE, verbose_name="Студент",
+                                related_name="in_dorm_assignments", null=True)
     application = models.OneToOneField('dorm.Application', on_delete=models.CASCADE, verbose_name="Заявление",
                                        related_name="dorm_assignment", null=True)
     room = models.ForeignKey('dorm.Room', on_delete=models.CASCADE, verbose_name="Комната",
@@ -411,9 +444,6 @@ class KnowledgeBase(models.Model):
         return self.question_keywords[:50]
 
 
-
-
-
 class GlobalSettings(models.Model):
     allow_application_edit = models.BooleanField(default=False, verbose_name="Студентам разрешено редактировать заявки")
 
@@ -432,8 +462,9 @@ class GlobalSettings(models.Model):
 
 
 from auditlog.registry import auditlog
+
 auditlog.register(Student)
 auditlog.register(Admin)
 auditlog.register(Keyword)
 auditlog.register(Application)
-
+auditlog.register(StudentInDorm)

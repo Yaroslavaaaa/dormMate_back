@@ -1,5 +1,6 @@
 from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import status, generics
+from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -15,7 +16,7 @@ from rest_framework.generics import ListAPIView
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.generics import RetrieveAPIView
-from django.db.models import Q
+from django.db.models import Q, Count
 from .utils import *
 from rest_framework import viewsets, permissions
 import requests
@@ -26,9 +27,16 @@ class RegionListView(generics.ListAPIView):
     serializer_class = RegionSerializer
 
 
-class StudentInDormView(generics.ListAPIView):
-    queryset = StudentInDorm.objects.all()
+class StudentInDormViewSet(viewsets.ModelViewSet):
+    """
+    Теперь этот ViewSet будет поддерживать GET (list/retrieve),
+    POST, PATCH, PUT, DELETE и т.д.
+    Мы используем его, чтобы можно было PATCH /api/v1/student-in-dorm/<id>/
+    и обновлять поле room.
+    """
+    queryset = StudentInDorm.objects.select_related('student', 'room', 'application').all()
     serializer_class = StudentInDormSerializer
+    permission_classes = [IsAuthenticated]
 
 
 class TestQuestionViewSet(generics.ListAPIView):
@@ -570,7 +578,61 @@ class ApplicationViewSet(viewsets.ModelViewSet):
 class DormsViewSet(viewsets.ModelViewSet):
     queryset = Dorm.objects.all()
     serializer_class = DormSerializer
+
+    @action(detail=False, methods=['get'])
+    def count(self, request):
+        dorms = Dorm.objects.annotate(
+            total_rooms=Count('rooms'),
+            rooms_for_2=Count('rooms', filter=Q(rooms__capacity=2)),
+            rooms_for_3=Count('rooms', filter=Q(rooms__capacity=3)),
+            rooms_for_4=Count('rooms', filter=Q(rooms__capacity=4)),
+        ).values(
+            'id', 'name', 'total_rooms', 'rooms_for_2', 'rooms_for_3', 'rooms_for_4'
+        )
+
+        total_dorms = Dorm.objects.count()
+
+        return Response({
+            'total_dorms': total_dorms,
+            'dorms': dorms
+        })
+
+
+
+
+
+
+class RoomViewSet(viewsets.ModelViewSet):
+    """
+    Теперь RoomSerializer возвращает поля:
+      - assigned_students (список ФИО),
+      - free_spots (число свободных мест).
+    Можно фильтровать по dorm_id и floor через query params.
+    """
+    queryset = Room.objects.all().select_related('dorm').prefetch_related('room_occupants__student')
+    serializer_class = RoomSerializer
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        dorm_id = self.request.query_params.get('dorm')
+        floor = self.request.query_params.get('floor')
+        if dorm_id is not None:
+            qs = qs.filter(dorm_id=dorm_id)
+        if floor is not None:
+            qs = qs.filter(floor=floor)
+        return qs
+
+
+class AppsViewSet(viewsets.ModelViewSet):
+    queryset = Application.objects.all()
+    serializer_class = ApplicationSerializer
     # permission_classes = [IsAdmin]
+
+    @action(detail=False, methods=['get'])
+    def count(self, request):
+        count = self.get_queryset().filter(status='pending').count()
+        return Response({'count': count})
+
 
 
 class DormImageViewSet(viewsets.ModelViewSet):
@@ -591,6 +653,19 @@ class DormImageViewSet(viewsets.ModelViewSet):
             raise ValidationError("Поле 'dorm' обязательно для заполнения.")
 
 
+
+
+class AppsViewSet(viewsets.ModelViewSet):
+    queryset = Application.objects.all()
+    serializer_class = ApplicationSerializer
+    # permission_classes = [IsAdmin]
+
+    @action(detail=False, methods=['get'])
+    def count(self, request):
+        count = self.get_queryset().filter(status='pending').count()
+        return Response({'count': count})
+
+
 class GlobalSettingsAPIView(APIView):
     def get_permissions(self):
         if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
@@ -607,6 +682,7 @@ class GlobalSettingsAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
 
 
 class StudentsViewSet(viewsets.ModelViewSet):
@@ -634,6 +710,13 @@ class StudentsViewSet(viewsets.ModelViewSet):
         if Student.objects.filter(s=s_value).exists():
             raise ValidationError(f"Student with s = {s_value} already exists.")
         serializer.save()
+
+    @action(detail=False, methods=['get'])
+    def count(self, request):
+        count = self.get_queryset().count()
+        return Response({'count': count})
+
+
 
 
 class UserApplicationView(APIView):
