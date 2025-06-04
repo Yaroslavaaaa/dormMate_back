@@ -31,8 +31,37 @@ def extract_text_from_pdf(file_obj):
     return text
 
 
+def extract_ent_score_from_pdf(file_obj):
+    """
+    Читает весь текст из PDF (file_obj) и ищет шаблон вида:
+        <число> Барлығы/Итого
+    Возвращает найденное число (int) или выдаёт ValidationError, если не найдено.
+    """
+    try:
+        reader = PyPDF2.PdfReader(file_obj)
+    except Exception as e:
+        raise ValidationError(f"Ошибка при чтении PDF: {str(e)}")
+
+    full_text = ""
+    for page in reader.pages:
+        try:
+            full_text += page.extract_text() or ""
+        except Exception:
+            continue
+
+    # Иногда в PDF может быть перенос строки между числом и текстом, приведём всё к одной строке
+    normalized = full_text.replace('\n', ' ')
+    # Ищем число перед словом "Барлығы" (каз.) или "Итого" (рус.), без учёта регистра
+    pattern = r"(\d+)\s*(?:Барлығы|Итого)"
+    match = re.search(pattern, normalized, flags=re.IGNORECASE)
+    if not match:
+        raise ValidationError("Не удалось найти итоговый балл ЕНТ (Барлығы/Итого) в PDF.")
+    return int(match.group(1))
+
+
 class CreateApplicationView(APIView):
     permission_classes = [IsStudent]
+    parser_classes = (MultiPartParser, FormParser)
 
     def post(self, request):
         student_id = request.user.student.id
@@ -57,20 +86,44 @@ class CreateApplicationView(APIView):
         if serializer.is_valid():
             try:
                 with transaction.atomic():
+                    # 1) Сохраняем саму заявку (пока без ent_result)
                     application = serializer.save(student=student, dormitory_cost=dormitory_cost)
 
-                    evidences_files = request.FILES
-                    for key, file in evidences_files.items():
+                    # 2) Проходим по всем загруженным файлам (request.FILES)
+                    #    Предполагается, что поле "ключ" – это код типа документа (EvidenceType.code)
+                    #    Если код соответствует сертификату ЕНТ, парсим оттуда балл.
+                    for key, file in request.FILES.items():
                         try:
                             evidence_type = EvidenceType.objects.get(code=key)
                         except EvidenceType.DoesNotExist:
+                            # Если для данного кода нет типа доказательства — пропускаем
                             continue
 
                         if file.content_type != 'application/pdf':
                             raise ValidationError(f"Файл в поле '{key}' должен быть формата PDF.")
 
-                        extracted_text = extract_text_from_pdf(file)
-                        file.seek(0)
+                        # Если этот тип доказательства — сертификат ЕНТ (код, например, 'ent_certificate'),
+                        # то сразу извлекаем из него число и сохраняем в application.ent_result
+                        if evidence_type.code == 'ent_certificate':
+                            # Обратите внимание: file — это InMemoryUploadedFile, поэтому перед чтением seek(0)
+                            file.seek(0)
+                            ent_score = extract_ent_score_from_pdf(file)
+                            # Сохраняем найденный балл в заявку и сбрасываем указатель
+                            application.ent_result = ent_score
+                            application.save()
+                            # Чтобы при повторном чтении PDF PyPDF2 не "потерял" поток, делаем seek(0) снова
+                            file.seek(0)
+
+                        # 3) Проверяем ключевые слова (если у EvidenceType указаны keywords)
+                        extracted_text = ''
+                        try:
+                            file.seek(0)
+                            reader = PyPDF2.PdfReader(file)
+                            for page in reader.pages:
+                                extracted_text += page.extract_text() or ""
+                        except Exception:
+                            # Если не удалось извлечь текст — будем дальше только сохранять файл
+                            extracted_text = ''
 
                         keywords = evidence_type.keywords.all()
                         if keywords and not any(
@@ -81,14 +134,17 @@ class CreateApplicationView(APIView):
                                 f"Загруженный файл для '{evidence_type.name}' не содержит необходимых ключевых слов."
                             )
 
+                        # 4) Если всё ок, создаём запись ApplicationEvidence
                         ApplicationEvidence.objects.create(
                             application=application,
                             evidence_type=evidence_type,
                             file=file
                         )
 
-                    evidence_types_with_auto_fill = EvidenceType.objects.exclude(auto_fill_field__isnull=True).exclude(
-                        auto_fill_field='')
+                    # 5) Автозаполнение по data_type у остальных типов evidence
+                    evidence_types_with_auto_fill = EvidenceType.objects.exclude(
+                        auto_fill_field__isnull=True
+                    ).exclude(auto_fill_field='')
 
                     for evidence_type in evidence_types_with_auto_fill:
                         auto_field = evidence_type.auto_fill_field
@@ -102,13 +158,28 @@ class CreateApplicationView(APIView):
                                     numeric_value=student_value
                                 )
                             elif evidence_type.data_type == 'file':
-                                pass
+                                # Если auto_fill_field указывает на поле-файл в модели Student,
+                                # можно скопировать его внутрь ApplicationEvidence.file
+                                source_file = getattr(student, auto_field)
+                                if source_file:
+                                    ApplicationEvidence.objects.create(
+                                        application=application,
+                                        evidence_type=evidence_type,
+                                        file=source_file
+                                    )
 
                 return Response(
-                    {"message": "Заявка создана", "application_id": application.id},
+                    {
+                        "message": "Заявка успешно создана",
+                        "application_id": application.id,
+                        # Дополнительно можем вернуть ent_result, если он был заполнен
+                        "ent_result": application.ent_result
+                    },
                     status=status.HTTP_201_CREATED
                 )
+
             except ValidationError as e:
+                # Откат транзакции при любой ошибке валидации
                 return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

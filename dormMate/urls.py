@@ -100,6 +100,8 @@ urlpatterns = [
     path('api/v1/student/application/', StudentApplicationUpdateView.as_view(), name='student-application-update'),
     path('api/v1/my-admin-role/', MyAdminRoleAPIView.as_view(), name='my-admin-role'),
     path('api/v1/application/evidences/', ApplicationEvidenceListView.as_view(), name='application-evidences'),
+    path('api/v1/global-settings/', GlobalSettingsAPIView.as_view(), name='global-settings'),
+    path('api/v1/ent-extract/', UNTReportView.as_view(), name='ent-extract'),
 
 ]
 

@@ -20,6 +20,8 @@ from django.db.models import Q, Count
 from .utils import *
 from rest_framework import viewsets, permissions
 import requests
+from rest_framework.parsers import MultiPartParser, FormParser
+import PyPDF2
 
 
 class RegionListView(generics.ListAPIView):
@@ -758,3 +760,56 @@ class ApplicationEvidenceListView(APIView):
             qs, many=True, context={'request': request}
         )
         return Response(serializer.data)
+
+
+
+class UNTReportView(APIView):
+    """
+    POST /api/ent-extract/
+    Принимает multipart/form-data с полем 'file':
+    - файл PDF с результатами ЕНТ/ҰБТ.
+    Возвращает JSON: { "total_score": <целое_число> }.
+    """
+    parser_classes = (MultiPartParser, FormParser)
+
+    def post(self, request, format=None):
+        # 1. Проверяем, что файл передан
+        uploaded_file = request.FILES.get('file')
+        if not uploaded_file:
+            return Response(
+                {"detail": "Не найден параметр 'file' с PDF."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 2. Пытаемся прочитать PDF с помощью PyPDF2
+        try:
+            reader = PyPDF2.PdfReader(uploaded_file)
+        except Exception as e:
+            return Response(
+                {"detail": f"Ошибка при чтении PDF: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 3. Собираем текст со всех страниц
+        full_text = ""
+        for page in reader.pages:
+            try:
+                full_text += page.extract_text() or ""
+            except Exception:
+                # Если не удалось извлечь текст с какой-то страницы — пропускаем её
+                continue
+
+        # 4. Ищем итоговый балл с помощью регулярки
+        # Шаблон: любое число, за которым сразу идёт 'Барлығы' или 'Итого'
+        pattern = r"(\d+)\s*(?:Барлығы|Итого)"
+        match = re.search(pattern, full_text, flags=re.IGNORECASE)
+        if not match:
+            return Response(
+                {"detail": "Не удалось найти строку с 'Барлығы/Итого' в PDF."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+
+        total_score = int(match.group(1))
+
+        # 5. Возвращаем результат
+        return Response({"total_score": total_score}, status=status.HTTP_200_OK)
