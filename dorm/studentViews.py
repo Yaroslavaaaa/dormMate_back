@@ -12,6 +12,8 @@ from django.db import transaction
 from rest_framework.parsers import MultiPartParser, FormParser
 import PyPDF2
 from rest_framework import permissions
+from django.core.files.storage import default_storage
+
 
 class IsStudent(IsAuthenticated):
     def has_permission(self, request, view):
@@ -275,6 +277,21 @@ class AvatarUploadView(APIView):
 
         return Response({'message': 'Аватар успешно обновлен.', 'avatar_url': student.avatar.url},
                         status=status.HTTP_200_OK)
+
+    def delete(self, request):
+        student = request.user.student
+        if student.avatar:
+            if default_storage.exists(student.avatar.name):
+                default_storage.delete(student.avatar.name)
+
+            student.avatar.delete(save=False)
+            student.avatar = None
+            student.save()
+
+            return Response({'message': 'Аватар удалён.'}, status=status.HTTP_200_OK)
+        else:
+            return Response({'error': 'Аватар не установлен.'}, status=status.HTTP_400_BAD_REQUEST)
+
 
 
 class StudentApplicationUpdateView(APIView):
