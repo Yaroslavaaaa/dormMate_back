@@ -189,10 +189,23 @@ class ChatSerializer(SanitizedModelSerializer):
         }
 
 
-class NotificationSerializer(SanitizedModelSerializer):
+class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
-        fields = ['id', 'message', 'created_at', 'is_read']
+        fields = ['id', 'recipient', 'message_ru', 'message_kk', 'message_en', 'created_at', 'is_read']
+
+        def get_message(self, obj):
+            # Получаем язык из запроса, например Accept-Language, или по другому методу
+            request = self.context.get('request')
+            lang = 'ru'
+            if request:
+                lang = request.LANGUAGE_CODE
+            if lang == 'kk':
+                return obj.message_kk or obj.message_ru or obj.message_en or ''
+            elif lang == 'en':
+                return obj.message_en or obj.message_ru or obj.message_kk or ''
+            return obj.message_ru or obj.message_kk or obj.message_en or ''
+
 
 
 class QuestionAnswerSerializer(SanitizedModelSerializer):
