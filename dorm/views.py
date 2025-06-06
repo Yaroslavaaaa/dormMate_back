@@ -28,22 +28,35 @@ class RegionListView(generics.ListAPIView):
     queryset = Region.objects.all()
     serializer_class = RegionSerializer
 
-
 class StudentInDormViewSet(viewsets.ModelViewSet):
     """
-    Теперь этот ViewSet будет поддерживать GET (list/retrieve),
-    POST, PATCH, PUT, DELETE и т.д.
-    Мы используем его, чтобы можно было PATCH /api/v1/student-in-dorm/<id>/
-    и обновлять поле room.
+    Теперь этот ViewSet поддерживает GET (list/retrieve), POST, PATCH, PUT, DELETE и т.д.
+    Добавляем возможность фильтровать список по student_id через ?student_id=<id>.
     """
     queryset = StudentInDorm.objects.select_related('student', 'room', 'application').all()
     serializer_class = StudentInDormSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        student_id = self.request.query_params.get('student_id')
+        if student_id:
+            # если передали ?student_id=<id>, отфильтровываем
+            qs = qs.filter(student__id=student_id)
+        return qs
+
 
 class TestQuestionViewSet(generics.ListAPIView):
     queryset = TestQuestion.objects.all()
     serializer_class = TestQuestionSerializer
+
+class StudentPagination(PageNumberPagination):
+    # По умолчанию будем отдавать 4 записи на страницу.
+    page_size = 4
+    # Позволим клиенту сам выбирать page_size, передавая параметр ?page_size=...
+    page_size_query_param = 'page_size'
+    # Максимальное число записей на страницу (при попытке запросить больше — всё равно вернётся page_size=4).
+    max_page_size = 100
 
 
 class IsAdmin(IsAuthenticated):
@@ -166,11 +179,13 @@ class KeywordViewSet(viewsets.ModelViewSet):
     queryset = Keyword.objects.all()
     serializer_class = KeywordSerializer
     permission_classes = [IsAdmin]
+    pagination_class = StudentPagination
 
 
 class EvidenceTypeViewSet(viewsets.ModelViewSet):
     queryset = EvidenceType.objects.all().order_by('-priority')
     serializer_class = EvidenceTypeSerializer
+    pagination_class = StudentPagination
 
     def get_permissions(self):
         if self.request.method in ['GET', 'HEAD', 'OPTIONS']:
@@ -578,12 +593,41 @@ class ApplicationViewSet(viewsets.ModelViewSet):
 
 
 class DormsViewSet(viewsets.ModelViewSet):
-    queryset = Dorm.objects.all()
+    """
+    Теперь поддерживается фильтрация по ?commandant=<admin_id>,
+    а также сохранился кастомный экшен count.
+    """
     serializer_class = DormSerializer
+    pagination_class = StudentPagination
+
+    def get_queryset(self):
+        """
+        Если в query_params есть commandant, фильтруем общежития по этому полю.
+        Иначе возвращаем все Dorm.
+        """
+        qs = Dorm.objects.all()
+        commandant_id = self.request.query_params.get("commandant")
+        if commandant_id is not None:
+            qs = qs.filter(commandant_id=commandant_id)
+        return qs
 
     @action(detail=False, methods=['get'])
     def count(self, request):
-        dorms = Dorm.objects.annotate(
+        """
+        Возвращает общее число общежитий (total_dorms)
+        и список объектов с количеством комнат разной вместимости:
+            - total_rooms
+            - rooms_for_2
+            - rooms_for_3
+            - rooms_for_4
+
+        Можно комбинировать с фильтром /api/dorms/count/?commandant=2, чтобы считать только
+        подчинённые конкретному коменданту.
+        """
+        # Базовый QuerySet, к которому применим те же фильтры, что и в get_queryset()
+        base_qs = self.get_queryset()
+
+        annotated = base_qs.annotate(
             total_rooms=Count('rooms'),
             rooms_for_2=Count('rooms', filter=Q(rooms__capacity=2)),
             rooms_for_3=Count('rooms', filter=Q(rooms__capacity=3)),
@@ -592,11 +636,11 @@ class DormsViewSet(viewsets.ModelViewSet):
             'id', 'name', 'total_rooms', 'rooms_for_2', 'rooms_for_3', 'rooms_for_4'
         )
 
-        total_dorms = Dorm.objects.count()
+        total_dorms = base_qs.count()
 
         return Response({
             'total_dorms': total_dorms,
-            'dorms': dorms
+            'dorms': annotated
         })
 
 
@@ -687,9 +731,14 @@ class GlobalSettingsAPIView(APIView):
 
 
 
+
+
+
+
 class StudentsViewSet(viewsets.ModelViewSet):
     queryset = Student.objects.all()
     serializer_class = StudentSerializer
+    pagination_class = StudentPagination
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -732,15 +781,27 @@ class UserApplicationView(APIView):
         except Application.DoesNotExist:
             return Response({'detail': 'Заявка не найдена.'}, status=404)
 
-
+#upd
 class AdminViewSet(viewsets.ModelViewSet):
+    """
+    В этом ViewSet мы ожидаем, что `request.user` у нас уже является экземпляром Admin,
+    а значит нам не нужно делать Admin.objects.get(user=...). Достаточно просто
+    сериализовать request.user.
+    """
     queryset = Admin.objects.all()
     serializer_class = AdminSerializer
-    permission_classes = [IsAdmin]
+    permission_classes = [permissions.IsAuthenticated]
 
+    @action(detail=False, methods=["get"], url_path="me")
+    def me(self, request):
+        # request.user уже тип Admin (потому что вы логинитесь как админ),
+        # просто сериализуем и возвращаем его:
+        serializer = self.get_serializer(request.user)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 class ApplicationListView(ListAPIView):
     serializer_class = ApplicationSerializer
+    pagination_class = StudentPagination
 
     def get_queryset(self):
         queryset = Application.objects.select_related('student')

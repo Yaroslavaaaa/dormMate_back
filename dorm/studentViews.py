@@ -218,8 +218,8 @@ class ApplicationStatusView(APIView):
             return Response({"status": "Ваша заявка принята, ожидайте ордер на заселение."}, status=status.HTTP_200_OK)
 
         student_in_dorm = StudentInDorm.objects.filter(application_id=application.id).first()
-        dormitory_name = student_in_dorm.dorm_id
-        room = student_in_dorm.room
+        dormitory_name = student_in_dorm.room. dorm.name
+        room = student_in_dorm.room.number
 
         if application.status == 'order':
             return Response({"status": f"Поздравляем! Вам выдан ордер в общежитие: {dormitory_name}, комната {room}"},
@@ -343,28 +343,36 @@ class AvatarUploadView(APIView):
         if not avatar:
             return Response({'error': 'Файл не выбран'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Загружаем новый аватар
         student.avatar = avatar
         student.save()
 
-        return Response({'message': 'Аватар успешно обновлен.', 'avatar_url': student.avatar.url},
-                        status=status.HTTP_200_OK)
+        return Response(
+            {'message': 'Аватар успешно обновлен.', 'avatar_url': student.avatar.url},
+            status=status.HTTP_200_OK
+        )
 
     def delete(self, request):
         student = request.user.student
-        if student.avatar:
+
+        if student.avatar and student.avatar.name != 'avatar/no-avatar.png':
+            # Удаляем файл с диска, если он сейчас не “no-avatar.png”
             if default_storage.exists(student.avatar.name):
                 default_storage.delete(student.avatar.name)
 
-            student.avatar.delete(save=False)
-            student.avatar = None
+            # Вместо того, чтобы делать student.avatar.delete(),
+            # сразу присваиваем путь к дефолтному аватару:
+            student.avatar = 'avatar/no-avatar.png'
             student.save()
 
-            return Response({'message': 'Аватар удалён.'}, status=status.HTTP_200_OK)
+            return Response({'message': 'Аватар удалён и восстановлен базовый.'}, status=status.HTTP_200_OK)
         else:
-            return Response({'error': 'Аватар не установлен.'}, status=status.HTTP_400_BAD_REQUEST)
+            # Если уже стоит “avatar/no-avatar.png”, просто вернём ошибку, или можно вернуть 200, если хотите считать это “ничем не требующим действий”
+            return Response({'error': 'Аватар уже не установлен.'}, status=status.HTTP_400_BAD_REQUEST)
 
 
 
+#upd
 class StudentApplicationUpdateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
@@ -386,6 +394,7 @@ class StudentApplicationUpdateView(APIView):
 
         data = request.data
 
+        # 1) Обновляем простые поля: dormitory_cost, parent_phone, ent_result
         changed = False
         for field in ("dormitory_cost", "parent_phone", "ent_result"):
             if field in data:
@@ -394,31 +403,48 @@ class StudentApplicationUpdateView(APIView):
         if changed:
             application.save()
 
-        added_evidences = []
-        add_list = data.get("add_evidences", [])
-        for evidence_data in add_list:
-            evidence_data["application"] = application.id
-            serializer = ApplicationEvidenceSerializer(data=evidence_data, context={'request': request})
-            if serializer.is_valid():
-                serializer.save()
-                added_evidences.append(serializer.data)
-            else:
-                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+        # 2) Удаляем помеченные справки (delete_evidences[])
+        #    DRF при multipart/form-data с delete_evidences[] = [id1, id2,...]
+        #    отдаёт список через data.getlist("delete_evidences[]")
         deleted_ids = []
-        delete_list = data.get("delete_evidences", [])
+        # если поле приходит как 'delete_evidences[]':
+        delete_list = data.getlist("delete_evidences[]") or data.get("delete_evidences", [])
         for evidence_id in delete_list:
             try:
-                evidence = ApplicationEvidence.objects.get(id=evidence_id, application=application)
-                evidence.delete()
-                deleted_ids.append(evidence_id)
-            except ApplicationEvidence.DoesNotExist:
+                eid = int(evidence_id)
+                evid = ApplicationEvidence.objects.get(id=eid, application=application)
+                evid.delete()
+                deleted_ids.append(eid)
+            except (ValueError, ApplicationEvidence.DoesNotExist):
                 pass
 
+        # 3) Обрабатываем новые файлы (request.FILES).
+        #    Каждый ключ – это код EvidenceType, а значение – сам файл.
+        added_evidences = []
+        for key, uploaded_file in request.FILES.items():
+            # Пропустим, если это, например, файл ent_certificate (он обрабатывался выше через ent-extract)
+            # Но если вы хотите создавать ApplicationEvidence и для ent_certificate (например, чтобы хранить сам файл),
+            # тогда просто не делать фильтрацию по key == "ent_certificate".
+            try:
+                evidence_type = EvidenceType.objects.get(code=key)
+            except EvidenceType.DoesNotExist:
+                continue
+
+            # Создаём новую запись ApplicationEvidence
+            new_ev = ApplicationEvidence.objects.create(
+                application=application,
+                evidence_type=evidence_type,
+                file=uploaded_file
+            )
+            # Собираем данные для ответа
+            serializer = ApplicationEvidenceSerializer(new_ev, context={'request': request})
+            added_evidences.append(serializer.data)
+
+        # В конце отдаём клиенту актуальную заявку + списки добавленных и удалённых
         application.refresh_from_db()
-        serializer = ApplicationSerializer(application, context={'request': request})
+        app_serializer = ApplicationSerializer(application, context={'request': request})
         return Response({
-            "application": serializer.data,
+            "application": app_serializer.data,
             "added_evidences": added_evidences,
             "deleted_evidences": deleted_ids,
         }, status=status.HTTP_200_OK)

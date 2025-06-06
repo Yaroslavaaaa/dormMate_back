@@ -114,11 +114,13 @@ class Admin(User):
     ROLE_SUPER = 'SUPER'
     ROLE_OPERATOR = 'OP'
     ROLE_REQUEST = 'REQ'
+    ROLE_COMMANDANT = 'COM'
 
     ROLE_CHOICES = [
         (ROLE_SUPER, 'Главный администратор'),
         (ROLE_OPERATOR, 'Оператор'),
         (ROLE_REQUEST, 'Администратор по работе с заявками'),
+        (ROLE_COMMANDANT, 'Комендант')
     ]
 
     role = models.CharField(
@@ -157,6 +159,13 @@ class Dorm(models.Model):
     address = models.CharField(max_length=255, verbose_name="Адрес")
     total_places = models.PositiveIntegerField(verbose_name="Количество мест")
     cost = models.PositiveIntegerField(verbose_name="Стоимость")
+    commandant = models.ForeignKey(
+        Admin,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Комендант"
+    )
 
     def __str__(self):
         return self.name_ru

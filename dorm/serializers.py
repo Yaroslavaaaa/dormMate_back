@@ -338,51 +338,50 @@ class ApplicationSerializer(SanitizedModelSerializer):
 
 
 class RoomSerializer(serializers.ModelSerializer):
-    dorm = DormSerializer(read_only=True)
-    assigned_students = serializers.SerializerMethodField(read_only=True)
-    free_spots = serializers.SerializerMethodField(read_only=True)
+    # Позволяем передавать внешнему ключу “dorm” именно ID
+    dorm = serializers.PrimaryKeyRelatedField(
+        queryset=Dorm.objects.all()
+    )
 
     class Meta:
         model = Room
+        # перечисляем только реальные поля модели (и внешн. ключ dorm)
         fields = (
             'id',
             'dorm',
             'number',
             'capacity',
             'floor',
-            'assigned_students',
-            'free_spots',
         )
-        read_only_fields = fields
-
-    def get_assigned_students(self, room: Room):
-        assignments = room.room_occupants.select_related('student').all()
-        result = []
-        for assign in assignments:
-            stu = assign.student
-            if stu:
-                fio = f"{stu.last_name} {stu.first_name} {stu.middle_name or ''}".strip()
-                result.append({
-                    "id": assign.id,
-                    "fio": fio
-                })
-        return result
+        # floor пусть будет read-only, его вычисляет модель
+        read_only_fields = ('id', 'floor')
 
     def get_free_spots(self, room: Room):
         occupied_count = room.room_occupants.count()
         free = room.capacity - occupied_count
         return free if free >= 0 else 0
 
+
+#upd
 class StudentInDormSerializer(serializers.ModelSerializer):
     student = StudentSerializer(read_only=True)
     application = ApplicationSerializer(read_only=True)
-    # Эта строчка была read_only=True, убираем, чтобы разрешить PATCH
-    room = serializers.PrimaryKeyRelatedField(
+
+    # Вложенный RoomSerializer для GET
+    room = RoomSerializer(read_only=True)
+
+    # Дополнительное поле для записи (PATCH) — присвоение комнаты по ID
+    room_id = serializers.PrimaryKeyRelatedField(
         queryset=Room.objects.all(),
-        allow_null=True,
-        required=False
+        source="room",
+        write_only=True,
+        required=False,
+        allow_null=True
     )
-    dorm = DormSerializer(read_only=True, source='room.dorm')
+
+    # Вложенный DormSerializer — название общежития приходит как часть room.dorm,
+    # но оставим и явное поле, если нужно сразу достать dorm без room.
+    dorm = DormSerializer(read_only=True, source="room.dorm")
 
     class Meta:
         model = StudentInDorm
@@ -390,8 +389,9 @@ class StudentInDormSerializer(serializers.ModelSerializer):
             'id',
             'student',
             'application',
-            'dorm',
-            'room',
+            'dorm',        # название общежития (берётся из room.dorm)
+            'room',        # RoomSerializer (nested)
+            'room_id',     # нужен для записи PATCH { "room_id": 12 }
             'group',
             'order',
             'assigned_at',
