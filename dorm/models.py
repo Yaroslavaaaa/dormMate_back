@@ -3,6 +3,8 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 import re
 from django.utils import timezone
 from django.conf import settings
+from auditlog.registry import auditlog
+
 
 from django.contrib.auth.hashers import make_password
 
@@ -146,14 +148,19 @@ from django.db import models
 
 
 class Dorm(models.Model):
-    name = models.CharField(max_length=255, verbose_name="Название")
-    description = models.TextField(blank=True, verbose_name="Описание")
+    name_ru = models.CharField(max_length=255, verbose_name="Название (рус)")
+    name_kk = models.CharField(max_length=255, blank=True, verbose_name="Атауы (қаз)")
+    name_en = models.CharField(max_length=255, blank=True, verbose_name="Name (eng)")
+    description_ru = models.TextField(blank=True, verbose_name="Описание (рус)")
+    description_kk = models.TextField(blank=True, verbose_name="Сипаттамасы (қаз)")
+    description_en = models.TextField(blank=True, verbose_name="Description (eng)")
     address = models.CharField(max_length=255, verbose_name="Адрес")
     total_places = models.PositiveIntegerField(verbose_name="Количество мест")
     cost = models.PositiveIntegerField(verbose_name="Стоимость")
 
     def __str__(self):
-        return self.name
+        return self.name_ru
+
 
     def floors_count(self) -> int:
         """
@@ -194,7 +201,7 @@ class Room(models.Model):
 
     class Meta:
         unique_together = ('dorm', 'number')
-        ordering = ['dorm__name', 'number']
+        ordering = ['dorm', 'number']
 
     def save(self, *args, **kwargs):
         """
@@ -230,14 +237,26 @@ class TestQuestion(models.Model):
         ('household', 'Бытовые привычки'),
     ]
 
-    question_text = models.TextField(verbose_name="Вопрос")
-    answer_variant_a = models.TextField(verbose_name="Вариант a", default=None)
-    answer_variant_b = models.TextField(verbose_name="Вариант b", default=None)
-    answer_variant_c = models.TextField(verbose_name="Вариант c", default=None)
+    question_text_ru = models.TextField(blank=True, verbose_name="Вопрос (рус)", default="")
+    question_text_kk = models.TextField(blank=True, verbose_name="Сұрақ (қаз)", default="" )
+    question_text_en = models.TextField(blank=True, verbose_name="Question (eng)", default="")
+
+    answer_variant_a_en = models.TextField(blank=True, null=True, verbose_name="Variant a (eng)", default="")
+    answer_variant_a_kk = models.TextField(blank=True, null=True, verbose_name="A нұсқасы (қаз)", default="")
+    answer_variant_a_ru = models.TextField(blank=True, null=True, verbose_name="Вариант a (рус)", default="")
+
+    answer_variant_b_ru = models.TextField(blank=True, verbose_name="Вариант b (рус)", default="")
+    answer_variant_b_kk = models.TextField(blank=True, verbose_name="B нұсқасы (қаз)", default="")
+    answer_variant_b_en = models.TextField(blank=True, verbose_name="Variant b (eng)", default="")
+
+    answer_variant_c_ru = models.TextField(blank=True, verbose_name="Вариант c (рус)", default="")
+    answer_variant_c_kk = models.TextField(blank=True, verbose_name="C нұсқасы (қаз)", default="")
+    answer_variant_c_en = models.TextField(blank=True, verbose_name="Variant c (eng)", default="")
+
     question_type = models.CharField(max_length=50, choices=QUESTION_TYPE_CHOICES, verbose_name="Тип вопроса")
 
     def __str__(self):
-        return self.question_text
+        return self.question_text_ru
 
 
 class Keyword(models.Model):
@@ -269,8 +288,8 @@ class EvidenceType(models.Model):
         help_text="Название поля в Application или Student, откуда брать значение при отсутствии загруженного доказательства",
         verbose_name="Поле автозаполнения"
     )
-    keywords = models.ManyToManyField('Keyword', through='EvidenceKeyword', blank=True, null=True,
-                                      verbose_name="Ключевые слова")
+    keywords = models.ManyToManyField('Keyword', through='EvidenceKeyword', blank=True, verbose_name="Ключевые слова")
+
 
     def __str__(self):
         return self.code
@@ -348,7 +367,7 @@ class StudentInRoom(models.Model):
     application = models.OneToOneField(Application, on_delete=models.CASCADE, related_name='assignment')
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='occupants')
     group = models.CharField(max_length=10, blank=True)
-    assigned_at = models.DateTimeField(default=timezone.now)
+    assigned_at = models.DateTimeField(default=timezone.now, verbose_name="Время расселения")
 
     class Meta:
         unique_together = ('application', 'room')
@@ -400,7 +419,9 @@ class Message(models.Model):
 
 class Notification(models.Model):
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
-    message = models.TextField()
+    message_ru = models.TextField(verbose_name="Текст уведомления (рус)")
+    message_kk = models.TextField(blank=True, verbose_name="Хабарлама (қаз)")
+    message_en = models.TextField(blank=True, verbose_name="Notification (eng)")
     created_at = models.DateTimeField(auto_now_add=True)
     is_read = models.BooleanField(default=False)
 
@@ -409,11 +430,15 @@ class Notification(models.Model):
 
 
 class QuestionAnswer(models.Model):
-    question = models.TextField(unique=True)
-    answer = models.TextField()
+    question_ru = models.TextField(unique=True, verbose_name="Вопрос (рус)")
+    question_kk = models.TextField(blank=True, verbose_name="Сұрақ (қаз)")
+    question_en = models.TextField(blank=True, verbose_name="Question (eng)")
+    answer_ru = models.TextField(verbose_name="Ответ (рус)")
+    answer_kk = models.TextField(blank=True, verbose_name="Жауап (қаз)")
+    answer_en = models.TextField(blank=True, verbose_name="Answer (eng)")
 
     def __str__(self):
-        return f"Q: {self.question} A: {self.answer}"
+        return f"Q: {self.question_ru[:30]}... A: {self.answer_ru[:30]}..."
 
 
 class StudentInDorm(models.Model):
@@ -461,10 +486,9 @@ class GlobalSettings(models.Model):
         verbose_name_plural = "Глобальные настройки"
 
 
-from auditlog.registry import auditlog
 
-auditlog.register(Student)
-auditlog.register(Admin)
-auditlog.register(Keyword)
-auditlog.register(Application)
-auditlog.register(StudentInDorm)
+# auditlog.register(Student)
+# auditlog.register(Admin)
+# auditlog.register(Keyword)
+# auditlog.register(Application)
+# auditlog.register(StudentInDorm)
