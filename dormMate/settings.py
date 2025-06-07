@@ -13,8 +13,14 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+
+# 1) Импортируем функцию для загрузки .env
+from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
+
+# Build paths inside the project like this: BASE_DIR / 'subdir'.
+# BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
@@ -36,14 +42,34 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'dorm.apps.UsersConfig',
+    'dorm.apps.DormConfig',
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'channels',
     'auditlog',
+    'storages',
 ]
+
+
+# 1. Указываем, что будем хранить медиаданные (медиа-файлы) в Azure Blob Storage
+DEFAULT_FILE_STORAGE = 'storages.backends.azure_storage.AzureStorage'
+
+# 2. (Опционально) Если вы хотите хранить статику (CSS/JS) в Azure, можно:
+# STATICFILES_STORAGE = 'storages.backends.azure_storage.AzureStorage'
+
+# 3. Основные параметры для Azure
+AZURE_ACCOUNT_NAME = os.environ.get('AZURE_ACCOUNT_NAME')
+AZURE_ACCOUNT_KEY = os.environ.get('AZURE_ACCOUNT_KEY')
+AZURE_CONTAINER = os.environ.get('AZURE_CONTAINER', "media")  # например, 'media'
+
+# 4. URL, по которому будут доступны файлы (опционально, если приватный контейнер)
+#    Если контейнер приватный, Django по умолчанию отдаёт путь вида:
+#    https://<аккаунт>.blob.core.windows.net/<контейнер>/<blob_name>
+#    Пользователи не смогут перейти по URL без SAS, но DRF-сериализатор отдаёт ссылку.
+AZURE_CUSTOM_DOMAIN = f'{AZURE_ACCOUNT_NAME}.blob.core.windows.net'
+MEDIA_URL = f'https://{AZURE_CUSTOM_DOMAIN}/{AZURE_CONTAINER}/'
 
 AUTH_USER_MODEL = 'dorm.User'
 
@@ -103,9 +129,9 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'dormmate',
         'USER': 'postgres',
-        'PASSWORD': '1234',
+        'PASSWORD': 'ya242004',
         'HOST': 'localhost',
-        'PORT': '5433',
+        'PORT': '5434',
     }
 }
 
@@ -142,7 +168,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
 STATIC_URL = 'static/'
-MEDIA_URL = '/media/'
+# MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Default primary key field type
@@ -223,3 +249,9 @@ CHANNEL_LAYERS = {
         "BACKEND": "channels.layers.InMemoryChannelLayer",
     },
 }
+
+
+
+
+
+

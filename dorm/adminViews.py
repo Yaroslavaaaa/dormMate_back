@@ -506,7 +506,7 @@ class DistributeStudentsAPIView2(APIView):
                     if created:
                         allocated_students.append({
                             "student_email": app.student.email,
-                            "dorm_name": dorm.name,
+                            "dorm_name": dorm.name_ru,
                             "room_number": room.number,
                             "group": str(group_counter)
                         })
@@ -543,7 +543,7 @@ class DistributeStudentsAPIView2(APIView):
                     if created:
                         allocated_students.append({
                             "student_email": app.student.email,
-                            "dorm_name": room.dorm.name,
+                            "dorm_name": room.dorm.name_ru,
                             "room_number": room.number,
                             "group": str(group_counter)
                         })
@@ -610,7 +610,7 @@ class IssueOrderAPIView(APIView):
             room = record.room
             dorm = room.dorm if room else None
 
-            dorm_name = dorm.name if dorm else "Не назначена"
+            dorm_name = dorm.name_ru if dorm else "Не назначена"
             room_number = room.number if room else "—"
 
             try:

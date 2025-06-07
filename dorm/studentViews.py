@@ -218,7 +218,7 @@ class ApplicationStatusView(APIView):
             return Response({"status": "Ваша заявка принята, ожидайте ордер на заселение."}, status=status.HTTP_200_OK)
 
         student_in_dorm = StudentInDorm.objects.filter(application_id=application.id).first()
-        dormitory_name = student_in_dorm.room. dorm.name
+        dormitory_name = student_in_dorm.room. dorm.name_ru
         room = student_in_dorm.room.number
 
         if application.status == 'order':

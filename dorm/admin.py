@@ -26,7 +26,7 @@ class RoomAdmin(admin.ModelAdmin):
         return obj.occupants.count()
     occupied_places.short_description = 'Занято мест'
 
-
+admin.site.register(Student)
 class EvidenceKeywordInline(admin.TabularInline):
     model = EvidenceKeyword
     extra = 1
