@@ -289,19 +289,20 @@ class ApplicationSerializer(SanitizedModelSerializer):
     evidences = ApplicationEvidenceSerializer(many=True, required=False)
     score = serializers.SerializerMethodField(read_only=True)
     gpa = serializers.SerializerMethodField()
+    dormitory_cost = serializers.IntegerField(required=True)
+    parent_phone = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    ent_result = serializers.IntegerField(required=False, allow_null=True)
+    test_answers = serializers.JSONField(required=False, allow_null=True)
+    test_result = serializers.CharField(required=False, allow_null=True)
+
+    # и так далее...
 
     class Meta:
         model = Application
         fields = '__all__'
         read_only_fields = [
-            'id',
-            'student',
-            'approval',
-            'status',
-            'payment_screenshot',
-            'is_full_payment',
-            'created_at',
-            'updated_at',
+            'id', 'student', 'approval', 'status', 'payment_screenshot',
+            'is_full_payment', 'created_at', 'updated_at'
         ]
 
     def get_gpa(self, obj):

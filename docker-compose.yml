@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: dormdb
+      POSTGRES_USER: dormuser
+      POSTGRES_PASSWORD: dormpass
+    ports:
+      - "5433:5432"     # На твоём ПК порт 5433, внутри контейнера 5432
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  backend:
+    build: .
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    environment:
+      - DB_NAME=dormdb
+      - DB_USER=dormuser
+      - DB_PASSWORD=dormpass
+      - DB_HOST=db
+      - DB_PORT=5432
+
+volumes:
+  pg_data:

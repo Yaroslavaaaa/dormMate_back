@@ -124,16 +124,19 @@ WSGI_APPLICATION = 'dormMate.wsgi.application'
 # }
 
 
+import os
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'dormmate',
-        'USER': 'postgres',
-        'PASSWORD': 'ya242004',
-        'HOST': 'localhost',
-        'PORT': '5434',
+        'NAME': os.getenv('DB_NAME', 'dormdb'),
+        'USER': os.getenv('DB_USER', 'dormuser'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'dormpass'),
+        'HOST': os.getenv('DB_HOST', 'db'),  # 'db' - это имя сервиса Postgres в docker-compose
+        'PORT': os.getenv('DB_PORT', '5432'),
     }
 }
+
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators

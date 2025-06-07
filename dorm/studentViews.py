@@ -115,8 +115,9 @@ class CreateApplicationView(APIView):
                             application.save()
                             # Чтобы при повторном чтении PDF PyPDF2 не "потерял" поток, делаем seek(0) снова
                             file.seek(0)
+                            continue
 
-                        # 3) Проверяем ключевые слова (если у EvidenceType указаны keywords)
+                            # 3) Проверяем ключевые слова (если у EvidenceType указаны keywords)
                         extracted_text = ''
                         try:
                             file.seek(0)

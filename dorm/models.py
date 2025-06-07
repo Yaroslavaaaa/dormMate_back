@@ -419,34 +419,38 @@ class Application(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Время последнего обновления")
 
     def save(self, *args, **kwargs):
-        # 1) Обработка изменения статуса
-        if self.pk:
-            old = Application.objects.get(pk=self.pk)
-            if old.status != self.status:
+        # 1) Обработка смены статуса (ваша существующая логика)...
+        if self.pk is not None:
+            try:
+                old = Application.objects.get(pk=self.pk)
+            except Application.DoesNotExist:
+                old = None
+            if old and old.status != self.status:
                 self._handle_status_change(old.status, self.status)
 
-        # 2) Сохраняем запись без payment_screenshot, чтобы получить self.pk (если новая)
-        file_obj = getattr(self.payment_screenshot, 'file', None)
+        # 2) Вынимаем файл только если он реально есть
+        file_obj = None
+        if self.payment_screenshot and self.payment_screenshot.name:
+            file_obj = self.payment_screenshot.file
+
+        # 3) Если это новая запись и есть файл — сохраняем сначала без файла, чтобы получить pk
         if self.pk is None and file_obj:
             temp = self.payment_screenshot
             self.payment_screenshot = None
-            super().save(*args, **kwargs)
+            super().save(*args, **kwargs)  # теперь у объекта есть pk
             self.payment_screenshot = temp
 
-        # 3) Основное сохранение модели (без повторной загрузки файла)
+        # 4) Основное сохранение модели
         super().save(*args, **kwargs)
 
-        # 4) Если загружен новый файл — читаем, загружаем в Azure и обновляем лишь поле
+        # 5) Если был файл — загружаем его в Azure и обновляем только поле
         if file_obj:
             file_obj.seek(0)
             data = file_obj.read()
-
-            # Генерируем уникальное имя и путь внутри контейнера
             ext = os.path.splitext(self.payment_screenshot.name)[1]
             unique_name = f"{uuid.uuid4().hex}{ext}"
             blob_path = f"payments/{unique_name}"
 
-            # Загружаем в Azure
             service_client = BlobServiceClient(
                 account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
                 credential=settings.AZURE_ACCOUNT_KEY
@@ -455,7 +459,6 @@ class Application(models.Model):
             blob_client = container_client.get_blob_client(blob_path)
             blob_client.upload_blob(data, overwrite=True)
 
-            # Обновляем в модели ключ blob-а и сохраняем только это поле
             self.payment_screenshot.name = blob_path
             super().save(update_fields=['payment_screenshot'])
 
