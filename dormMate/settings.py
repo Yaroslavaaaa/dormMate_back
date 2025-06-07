@@ -13,7 +13,7 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
-
+import dj_database_url
 # 1) Импортируем функцию для загрузки .env
 from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -126,15 +126,19 @@ WSGI_APPLICATION = 'dormMate.wsgi.application'
 
 import os
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': os.getenv('DB_NAME', 'dormdb'),
+#         'USER': os.getenv('DB_USER', 'dormuser'),
+#         'PASSWORD': os.getenv('DB_PASSWORD', 'dormpass'),
+#         'HOST': os.getenv('DB_HOST', 'db'),  # 'db' - это имя сервиса Postgres в docker-compose
+#         'PORT': os.getenv('DB_PORT', '5432'),
+#     }
+# }
+
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME', 'dormdb'),
-        'USER': os.getenv('DB_USER', 'dormuser'),
-        'PASSWORD': os.getenv('DB_PASSWORD', 'dormpass'),
-        'HOST': os.getenv('DB_HOST', 'db'),  # 'db' - это имя сервиса Postgres в docker-compose
-        'PORT': os.getenv('DB_PORT', '5432'),
-    }
+    'default': dj_database_url.config(default=os.getenv('DATABASE_URL'))
 }
 
 
