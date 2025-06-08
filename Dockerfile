@@ -1,7 +1,7 @@
 # Используем официальный образ Python как базовый
 FROM python:3.11-slim
 
-# Установка зависимостей для сборки и системных библиотек (опционально можно добавить gcc и др.)
+# Установка зависимостей
 RUN apt-get update && apt-get install -y \
     build-essential \
     libpq-dev \
@@ -20,8 +20,12 @@ RUN pip install -r requirements.txt
 # Копируем всё приложение
 COPY . .
 
-# Открываем порт 8000 для Django
+# Открываем порт 8000
 EXPOSE 8000
 
-# Команда запуска (можешь поменять на gunicorn, если нужно)
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+# Статические файлы (если нужно)
+# ENV DJANGO_SETTINGS_MODULE=dormMate.settings
+# RUN python manage.py collectstatic --noinput
+
+# Запуск через gunicorn (замени 'dormMate' на свою папку с settings)
+CMD ["gunicorn", "dormMate.wsgi:application", "--bind", "0.0.0.0:8000"]

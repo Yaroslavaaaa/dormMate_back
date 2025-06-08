@@ -31,9 +31,7 @@ SECRET_KEY = 'django-insecure-c4!s9(3y^h)8_thtf)o=wq15%6ol3h%m-!$yq+u^%$lhc+^r5c
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = [
-    '127.0.0.1', 'localhost', 'dorm-back.onrender.com', 'dormmate-713111665969.europe-west1.run.app', 'dormmate-back.onrender.com'
-]
+ALLOWED_HOSTS = ['127.0.0.1', '10.0.2.2', 'localhost']
 
 # Application definition
 
