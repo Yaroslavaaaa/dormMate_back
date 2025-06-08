@@ -215,7 +215,7 @@ class AdminNotificationListView(APIView):
 
         data = [{
             "id": n.id,
-            "message": n.message,
+            "message_ru": n.message,
             "created_at": n.created_at.isoformat()
         } for n in notifications]
         return Response(data, status=status.HTTP_200_OK)
@@ -425,7 +425,7 @@ class SendMessageView(APIView):
             if admin:
                 Notification.objects.create(
                     recipient=admin,
-                    message=f"Новый вопрос в чате #{chat.id}, требуется участие оператора."
+                    message_ru=f"Новый вопрос в чате #{chat.id}, требуется участие оператора."
                 )
 
                 Message.objects.create(
@@ -633,7 +633,7 @@ class DormsViewSet(viewsets.ModelViewSet):
             rooms_for_3=Count('rooms', filter=Q(rooms__capacity=3)),
             rooms_for_4=Count('rooms', filter=Q(rooms__capacity=4)),
         ).values(
-            'id', 'name', 'total_rooms', 'rooms_for_2', 'rooms_for_3', 'rooms_for_4'
+            'id', 'name_ru', 'total_rooms', 'rooms_for_2', 'rooms_for_3', 'rooms_for_4'
         )
 
         total_dorms = base_qs.count()

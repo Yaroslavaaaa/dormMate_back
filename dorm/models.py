@@ -68,7 +68,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     birth_date = models.DateField(verbose_name="Дата рождения", blank=True, null=True)
     phone_number = models.CharField(max_length=11, blank=True, unique=True)
 
-    avatar = models.ImageField(upload_to=avatar_upload_path, default='avatar/no-avatar.png')
+    avatar = models.ImageField(upload_to=avatar_upload_path, default='avatars/no-avatar.png')
     gender = models.CharField(
         max_length=1,
         choices=GENDER_CHOICES,
@@ -89,44 +89,56 @@ class User(AbstractBaseUser, PermissionsMixin):
         return f"{self.first_name} {self.last_name} {self.middle_name or ''}".strip()
 
     def save(self, *args, **kwargs):
-        # 1) Хешируем пароль
+        # 1) Хешируем пароль, если он ещё не зашифрован
         if self.password and not self.password.startswith('pbkdf2_sha256$'):
             self.set_password(self.password)
+
         # 2) Приводим s к верхнему регистру
         if self.s:
             self.s = self.s.upper()
 
-        # Сохраняем модель, чтобы получить PK
+        # Определяем, сохраняем ли мы новый объект
         is_new = self.pk is None
+
+        # Сохраняем модель, чтобы получить self.pk
         super().save(*args, **kwargs)
 
-        # Если загружен файл и это не дефолт
+        # Если дефолтный аватар — сразу выходим
+        default_avatar = 'avatars/no-avatar.png'
+        if self.avatar.name == default_avatar:
+            return
+
+        # Если это обновление и аватар не менялся — выходим
+        update_fields = kwargs.get('update_fields')
+        if not is_new and update_fields and 'avatars' not in update_fields:
+            return
+
+        # Работаем с файлом аватара
         file_obj = getattr(self.avatar, 'file', None)
-        default_key = 'avatar/no-avatar.png'
-        if file_obj and self.avatar.name != default_key:
-            # Перематываем в начало и читаем данные
-            file_obj.seek(0)
-            data = file_obj.read()
+        if not file_obj:
+            return
 
-            # Генерируем уникальное имя
-            ext = os.path.splitext(self.avatar.name)[1]
-            unique_name = f"{uuid.uuid4().hex}{ext}"
+        # Читаем содержимое
+        file_obj.seek(0)
+        data = file_obj.read()
 
-            # Формируем blob-путь: avatars/user_<pk>/<unique_name>
-            blob_path = f"avatars/user_{self.pk}/{unique_name}"
+        # Формируем уникальный путь в контейнере Azure
+        ext = os.path.splitext(self.avatar.name)[1]
+        unique_name = f"{uuid.uuid4().hex}{ext}"
+        blob_path = f"avatars/user_{self.pk}/{unique_name}"
 
-            # Загружаем в Azure
-            service_client = BlobServiceClient(
-                account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
-                credential=settings.AZURE_ACCOUNT_KEY
-            )
-            container_client = service_client.get_container_client(settings.AZURE_CONTAINER)
-            blob_client = container_client.get_blob_client(blob_path)
-            blob_client.upload_blob(data, overwrite=True)
+        # Загружаем в Azure Blob Storage
+        service_client = BlobServiceClient(
+            account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
+            credential=settings.AZURE_ACCOUNT_KEY
+        )
+        container_client = service_client.get_container_client(settings.AZURE_CONTAINER)
+        blob_client = container_client.get_blob_client(blob_path)
+        blob_client.upload_blob(data, overwrite=True)
 
-            # Обновляем поле avatar.name и сохраняем в БД
-            self.avatar.name = blob_path
-            super().save(update_fields=['avatar'])
+        # Сохраняем новый путь в базе
+        self.avatar.name = blob_path
+        super().save(update_fields=['avatar'])
 
 
 class Student(User):
@@ -143,7 +155,42 @@ class Student(User):
         if not re.fullmatch(r"S\d{8}", self.s):
             raise ValueError(
                 'Student "s" must start with "S" followed by exactly eight digits, making it 9 characters long.')
-        super().save(*args, **kwargs)
+        # super().save(*args, **kwargs)
+
+        default_avatar = 'avatars/no-avatar.png'
+        # Если дефолтный аватар — СНАЧАЛА сохраняем, а потом просто выходим
+        if self.avatar.name == default_avatar:
+            super().save(*args, **kwargs)
+            return
+
+        is_new = self.pk is None
+        update_fields = kwargs.get('update_fields')
+        if not is_new and update_fields and 'avatars' not in update_fields:
+            super().save(*args, **kwargs)
+            return
+
+        file_obj = getattr(self.avatar, 'file', None)
+        if not file_obj:
+            super().save(*args, **kwargs)
+            return
+
+        file_obj.seek(0)
+        data = file_obj.read()
+
+        ext = os.path.splitext(self.avatar.name)[1]
+        unique_name = f"{uuid.uuid4().hex}{ext}"
+        blob_path = f"avatars/user_{self.pk}/{unique_name}"
+
+        service_client = BlobServiceClient(
+            account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
+            credential=settings.AZURE_ACCOUNT_KEY
+        )
+        container_client = service_client.get_container_client(settings.AZURE_CONTAINER)
+        blob_client = container_client.get_blob_client(blob_path)
+        blob_client.upload_blob(data, overwrite=True)
+
+        self.avatar.name = blob_path
+        super().save(update_fields=['avatar'])
 
 
 class Admin(User):
@@ -178,7 +225,41 @@ class Admin(User):
             raise ValueError(
                 'Admin "s" must start with "F" followed by exactly eight digits, making it 9 characters long.'
             )
-        super().save(*args, **kwargs)
+
+        default_avatar = 'avatars/no-avatar.png'
+        # Если дефолтный аватар — СНАЧАЛА сохраняем, а потом просто выходим
+        if self.avatar.name == default_avatar:
+            super().save(*args, **kwargs)
+            return
+
+        is_new = self.pk is None
+        update_fields = kwargs.get('update_fields')
+        if not is_new and update_fields and 'avatars' not in update_fields:
+            super().save(*args, **kwargs)
+            return
+
+        file_obj = getattr(self.avatar, 'file', None)
+        if not file_obj:
+            super().save(*args, **kwargs)
+            return
+
+        file_obj.seek(0)
+        data = file_obj.read()
+
+        ext = os.path.splitext(self.avatar.name)[1]
+        unique_name = f"{uuid.uuid4().hex}{ext}"
+        blob_path = f"avatars/user_{self.pk}/{unique_name}"
+
+        service_client = BlobServiceClient(
+            account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
+            credential=settings.AZURE_ACCOUNT_KEY
+        )
+        container_client = service_client.get_container_client(settings.AZURE_CONTAINER)
+        blob_client = container_client.get_blob_client(blob_path)
+        blob_client.upload_blob(data, overwrite=True)
+
+        self.avatar.name = blob_path
+        super().save(update_fields=['avatar'])
 
 
 import re
@@ -471,7 +552,7 @@ class Application(models.Model):
             'order': 'Статус заявки был изменен. Ваш ордер готов! Детали можете посмотреть в профиле в разделе статус заявки.'
         }
         if new_status in messages:
-            Notification.objects.create(recipient=user, message=messages[new_status])
+            Notification.objects.create(recipient=user, message_ru=messages[new_status])
 
     @property
     def needs_low_floor(self) -> bool:
@@ -658,8 +739,8 @@ class GlobalSettings(models.Model):
 
 
 
-# auditlog.register(Student)
-# auditlog.register(Admin)
-# auditlog.register(Keyword)
-# auditlog.register(Application)
-# auditlog.register(StudentInDorm)
+auditlog.register(Student)
+auditlog.register(Admin)
+auditlog.register(Keyword)
+auditlog.register(Application)
+auditlog.register(StudentInDorm)

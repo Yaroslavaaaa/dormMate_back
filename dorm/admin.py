@@ -67,6 +67,8 @@ admin.site.register(DormImage)
 admin.site.register(Region)
 admin.site.register(TestQuestion)
 admin.site.register(QuestionAnswer)
+admin.site.register(Admin)
+admin.site.register(User)
 
 
 def export_students_in_dorm_to_excel(modeladmin, request, queryset):

@@ -317,7 +317,7 @@ class RequestAdminView(APIView):
         for admin in admins:
             Notification.objects.create(
                 recipient=admin,
-                message=message
+                message_ru=message
             )
 
         channel_layer = get_channel_layer()

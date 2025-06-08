@@ -31,7 +31,9 @@ SECRET_KEY = 'django-insecure-c4!s9(3y^h)8_thtf)o=wq15%6ol3h%m-!$yq+u^%$lhc+^r5c
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['127.0.0.1', '10.0.2.2', 'localhost']
+ALLOWED_HOSTS = [
+    '127.0.0.1', 'localhost', 'dorm-back.onrender.com', 'dormmate-713111665969.europe-west1.run.app', 'dormmate-back.onrender.com'
+]
 
 # Application definition
 
@@ -126,14 +128,28 @@ WSGI_APPLICATION = 'dormMate.wsgi.application'
 
 import os
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': os.getenv('DB_NAME', 'dormmate'),
+#         'USER': os.getenv('DB_USER', 'postgres'),
+#         'PASSWORD': os.getenv('DB_PASSWORD', 'ya242004'),
+#         'HOST': os.getenv('DB_HOST', 'localhost'),  # 'db' - это имя сервиса Postgres в docker-compose
+#         'PORT': os.getenv('DB_PORT', '5434'),
+#     }
+# }
+
+
+
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME', 'dormdb'),
-        'USER': os.getenv('DB_USER', 'dormuser'),
-        'PASSWORD': os.getenv('DB_PASSWORD', 'dormpass'),
-        'HOST': os.getenv('DB_HOST', 'db'),  # 'db' - это имя сервиса Postgres в docker-compose
-        'PORT': os.getenv('DB_PORT', '5432'),
+        'NAME': 'dormmate',
+        'USER': 'assem',
+        'PASSWORD': 'LwrQmJ3C519FH880q2NeQTNnwDpfCoue',
+        'HOST': 'dpg-d12ngrh5pdvs73cu87k0-a.frankfurt-postgres.render.com',
+        'PORT': '5432',
     }
 }
 

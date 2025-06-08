@@ -74,10 +74,12 @@ class AdminSerializer(SanitizedModelSerializer):
 
     def create(self, validated_data):
         password = validated_data.pop('password')
+        print("Creating admin with data:", validated_data)  # Лог
         admin = Admin(**validated_data)
         admin.set_password(password)
         admin.is_staff = True
         admin.save()
+        print("Created admin id:", admin.id)  # Лог
         return admin
 
     def update(self, instance, validated_data):
