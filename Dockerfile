@@ -1,31 +1,28 @@
-# Используем официальный образ Python как базовый
+# 1. Базовый образ Python
 FROM python:3.11-slim
 
-# Установка зависимостей
+# 2. Установка системных зависимостей (при необходимости)
 RUN apt-get update && apt-get install -y \
     build-essential \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем рабочую директорию внутри контейнера
+# 3. Установка рабочей директории
 WORKDIR /app
 
-# Копируем зависимости
+# 4. Копирование зависимостей
 COPY requirements.txt .
 
-# Устанавливаем зависимости Python
+# 5. Установка Python-зависимостей
 RUN pip install --upgrade pip
 RUN pip install -r requirements.txt
 
-# Копируем всё приложение
+# 6. Копирование исходного кода проекта
 COPY . .
 
-# Открываем порт 8000
-EXPOSE 8000
+# 7. EXPOSE: Для локальной отладки (Cloud Run игнорирует)
+EXPOSE 8080
 
-# Статические файлы (если нужно)
-# ENV DJANGO_SETTINGS_MODULE=dormMate.settings
-# RUN python manage.py collectstatic --noinput
-
-# Запуск через gunicorn (замени 'dormMate' на свою папку с settings)
-CMD ["gunicorn", "dormMate.wsgi:application", "--bind", "0.0.0.0:8000"]
+# 8. Команда запуска:
+#   - Важно: слушаем порт 8080 (Cloud Run ждёт именно его!)
+CMD ["gunicorn", "dormMate.wsgi:application", "--bind", "0.0.0.0:8080"]
