@@ -1,4 +1,14 @@
 APPLICATION_STATUS_TRANSLATIONS = {
+    'no_application': {
+        'ru': 'Заявка не найдена',
+        'kk': 'Өтініш табылмады',
+        'en': 'No application found'
+    },
+    'test_not_passed': {
+        'ru': 'Тест не пройден',
+        'kk': 'Тест тапсырылмады',
+        'en': 'Test not passed'
+    },
     'pending': {
         'ru': 'На рассмотрении',
         'kk': 'Қаралуда',
@@ -28,5 +38,10 @@ APPLICATION_STATUS_TRANSLATIONS = {
         'ru': 'Ордер получен',
         'kk': 'Ордер берілді',
         'en': 'Order received'
+    },
+    'unknown': {
+        'ru': 'Неизвестный статус',
+        'kk': 'Белгісіз мәртебе',
+        'en': 'Unknown status'
     },
 }
