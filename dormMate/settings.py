@@ -13,8 +13,6 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
-
-# 1) Импортируем функцию для загрузки .env
 from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / '.env')
@@ -53,40 +51,30 @@ INSTALLED_APPS = [
 ]
 
 
-# 1. Указываем, что будем хранить медиаданные (медиа-файлы) в Azure Blob Storage
 DEFAULT_FILE_STORAGE = 'storages.backends.azure_storage.AzureStorage'
 
-# 2. (Опционально) Если вы хотите хранить статику (CSS/JS) в Azure, можно:
 # STATICFILES_STORAGE = 'storages.backends.azure_storage.AzureStorage'
 
-# 3. Основные параметры для Azure
 AZURE_ACCOUNT_NAME = os.environ.get('AZURE_ACCOUNT_NAME')
 AZURE_ACCOUNT_KEY = os.environ.get('AZURE_ACCOUNT_KEY')
 AZURE_CONTAINER = os.environ.get('AZURE_CONTAINER', "media")  # например, 'media'
 
-# 4. URL, по которому будут доступны файлы (опционально, если приватный контейнер)
-#    Если контейнер приватный, Django по умолчанию отдаёт путь вида:
-#    https://<аккаунт>.blob.core.windows.net/<контейнер>/<blob_name>
-#    Пользователи не смогут перейти по URL без SAS, но DRF-сериализатор отдаёт ссылку.
+
 AZURE_CUSTOM_DOMAIN = f'{AZURE_ACCOUNT_NAME}.blob.core.windows.net'
 MEDIA_URL = f'https://{AZURE_CUSTOM_DOMAIN}/{AZURE_CONTAINER}/'
 
 AUTH_USER_MODEL = 'dorm.User'
 
 MIDDLEWARE = [
-    # 1) CORS как можно выше, до Common/CSRF
     "corsheaders.middleware.CorsMiddleware",
 
-    # 2) стандартные Django-мидлвари
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
 
-    # 3) Auditlog сразу после того, как request.user уже установлен
     'dorm.middleware.JWTAuthMiddleware',
     "auditlog.middleware.AuditlogMiddleware",
 
-    # 4) остальные
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
@@ -126,30 +114,30 @@ WSGI_APPLICATION = 'dormMate.wsgi.application'
 
 import os
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': os.getenv('DB_NAME', 'dormmate'),
-#         'USER': os.getenv('DB_USER', 'postgres'),
-#         'PASSWORD': os.getenv('DB_PASSWORD', 'ya242004'),
-#         'HOST': os.getenv('DB_HOST', 'localhost'),  # 'db' - это имя сервиса Postgres в docker-compose
-#         'PORT': os.getenv('DB_PORT', '5434'),
-#     }
-# }
-
-
-
-
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'dormmate',
-        'USER': 'assem',
-        'PASSWORD': 'LwrQmJ3C519FH880q2NeQTNnwDpfCoue',
-        'HOST': 'dpg-d12ngrh5pdvs73cu87k0-a.frankfurt-postgres.render.com',
-        'PORT': '5432',
+        'NAME': os.getenv('DB_NAME', 'dormmate'),
+        'USER': os.getenv('DB_USER', 'postgres'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'ya242004'),
+        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'PORT': os.getenv('DB_PORT', '5434'),
     }
 }
+
+
+
+
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'NAME': 'dormmate',
+#         'USER': 'assem',
+#         'PASSWORD': 'LwrQmJ3C519FH880q2NeQTNnwDpfCoue',
+#         'HOST': 'dpg-d12ngrh5pdvs73cu87k0-a.frankfurt-postgres.render.com',
+#         'PORT': '5432',
+#     }
+# }
 
 
 # Password validation
@@ -170,8 +158,7 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-# Internationalization
-# https://docs.djangoproject.com/en/5.1/topics/i18n/
+
 
 LANGUAGE_CODE = 'ru'
 
@@ -181,12 +168,11 @@ USE_I18N = True
 
 USE_TZ = True
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.1/howto/static-files/
+
 
 STATIC_URL = 'static/'
 # MEDIA_URL = '/media/'
-MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
+# MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field

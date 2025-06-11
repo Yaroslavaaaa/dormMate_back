@@ -592,7 +592,7 @@ class DistributeStudentsAPIView2(APIView):
 
 
 class IssueOrderAPIView(APIView):
-    permission_classes = [IsAdmin]  # или IsAdmin
+    permission_classes = [IsAdmin]
 
     def post(self, request, *args, **kwargs):
         waiting_records = StudentInDorm.objects.filter(
@@ -834,7 +834,6 @@ User = get_user_model()
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = AuditLogSerializer
-    # permission_classes = [IsAdmin]
     ordering_fields = ['timestamp']
     ordering = ['-timestamp']
 
@@ -866,10 +865,8 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
                 'object_id',
                 'object_repr',
                 'changes',
-                # Поля для content_type
                 'content_type__app_label',
                 'content_type__model',
-                # Поля для actor
                 'actor__first_name',
                 'actor__last_name',
             )

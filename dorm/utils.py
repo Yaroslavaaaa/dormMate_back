@@ -1,4 +1,4 @@
-from dorm.models import EvidenceType, KnowledgeBase
+from .models import EvidenceType, KnowledgeBase
 from django.core.mail import send_mail
 from django.conf import settings
 # from sentence_transformers import SentenceTransformer
@@ -20,7 +20,6 @@ def send_email_notification(email, message):
 
 def calculate_application_score(application):
     score = 0
-    # Собираем одобренные доказательства в словарь (ключ – код EvidenceType)
     evidences = {
         e.evidence_type.code: e
         for e in application.evidences.filter(approved=True)

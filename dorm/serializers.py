@@ -46,7 +46,6 @@ class StudentSerializer(SanitizedModelSerializer):
         model = Student
         fields = '__all__'
 
-
 class GlobalSettingsSerializer(SanitizedModelSerializer):
     class Meta:
         model = GlobalSettings
@@ -54,6 +53,10 @@ class GlobalSettingsSerializer(SanitizedModelSerializer):
 
 
 class AdminSerializer(SanitizedModelSerializer):
+    role = serializers.ChoiceField(
+        choices=Admin.ROLE_CHOICES,
+        read_only=True
+    )
     password = serializers.CharField(write_only=True, required=False)
 
     class Meta:
@@ -63,7 +66,7 @@ class AdminSerializer(SanitizedModelSerializer):
             'email', 'birth_date', 'phone_number', 'avatar', 'gender',
             'is_active', 'is_staff', 'role', 'password',
         ]
-        read_only_fields = ['id', 'is_staff']
+        read_only_fields = ['id', 'is_staff', 'role']
 
     def validate_s(self, value):
         if not re.fullmatch(r'F\d{8}', value):
@@ -74,12 +77,12 @@ class AdminSerializer(SanitizedModelSerializer):
 
     def create(self, validated_data):
         password = validated_data.pop('password')
-        print("Creating admin with data:", validated_data)  # Лог
+        print("Creating admin with data:", validated_data)
         admin = Admin(**validated_data)
         admin.set_password(password)
         admin.is_staff = True
         admin.save()
-        print("Created admin id:", admin.id)  # Лог
+        print("Created admin id:", admin.id)
         return admin
 
     def update(self, instance, validated_data):
@@ -197,7 +200,6 @@ class NotificationSerializer(serializers.ModelSerializer):
         fields = ['id', 'recipient', 'message_ru', 'message_kk', 'message_en', 'created_at', 'is_read']
 
         def get_message(self, obj):
-            # Получаем язык из запроса, например Accept-Language, или по другому методу
             request = self.context.get('request')
             lang = 'ru'
             if request:
@@ -297,7 +299,6 @@ class ApplicationSerializer(SanitizedModelSerializer):
     test_answers = serializers.JSONField(required=False, allow_null=True)
     test_result = serializers.CharField(required=False, allow_null=True)
 
-    # и так далее...
 
     class Meta:
         model = Application
@@ -341,14 +342,12 @@ class ApplicationSerializer(SanitizedModelSerializer):
 
 
 class RoomSerializer(serializers.ModelSerializer):
-    # Позволяем передавать внешнему ключу “dorm” именно ID
     dorm = serializers.PrimaryKeyRelatedField(
         queryset=Dorm.objects.all()
     )
 
     class Meta:
         model = Room
-        # перечисляем только реальные поля модели (и внешн. ключ dorm)
         fields = (
             'id',
             'dorm',
@@ -356,7 +355,6 @@ class RoomSerializer(serializers.ModelSerializer):
             'capacity',
             'floor',
         )
-        # floor пусть будет read-only, его вычисляет модель
         read_only_fields = ('id', 'floor')
 
     def get_free_spots(self, room: Room):
@@ -365,15 +363,12 @@ class RoomSerializer(serializers.ModelSerializer):
         return free if free >= 0 else 0
 
 
-#upd
 class StudentInDormSerializer(serializers.ModelSerializer):
     student = StudentSerializer(read_only=True)
     application = ApplicationSerializer(read_only=True)
 
-    # Вложенный RoomSerializer для GET
     room = RoomSerializer(read_only=True)
 
-    # Дополнительное поле для записи (PATCH) — присвоение комнаты по ID
     room_id = serializers.PrimaryKeyRelatedField(
         queryset=Room.objects.all(),
         source="room",
@@ -382,8 +377,6 @@ class StudentInDormSerializer(serializers.ModelSerializer):
         allow_null=True
     )
 
-    # Вложенный DormSerializer — название общежития приходит как часть room.dorm,
-    # но оставим и явное поле, если нужно сразу достать dorm без room.
     dorm = DormSerializer(read_only=True, source="room.dorm")
 
     class Meta:
@@ -392,9 +385,9 @@ class StudentInDormSerializer(serializers.ModelSerializer):
             'id',
             'student',
             'application',
-            'dorm',        # название общежития (берётся из room.dorm)
-            'room',        # RoomSerializer (nested)
-            'room_id',     # нужен для записи PATCH { "room_id": 12 }
+            'dorm',
+            'room',
+            'room_id',
             'group',
             'order',
             'assigned_at',

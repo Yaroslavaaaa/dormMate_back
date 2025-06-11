@@ -1,7 +1,8 @@
-# dorm/admin.py
 from django.contrib import admin
 import pandas as pd
 from django.http import HttpResponse
+from django.contrib.admin.widgets import AdminFileWidget
+
 
 from .models import *
 
@@ -17,16 +18,28 @@ class RoomInline(admin.TabularInline):
 @admin.register(Room)
 class RoomAdmin(admin.ModelAdmin):
     list_display = ('dorm', 'number', 'capacity', 'occupied_places', 'floor')
-    # Заменили 'dorm__name' на 'dorm__name_ru'
     list_filter  = ('dorm__name_ru',)
-    # Заменили 'dorm__name' на 'dorm__name_ru'
     search_fields = ('number', 'dorm__name_ru')
 
     def occupied_places(self, obj):
         return obj.occupants.count()
     occupied_places.short_description = 'Занято мест'
 
-admin.site.register(Student)
+
+from django.core.files.storage import default_storage
+
+class AzureAdminFileWidget(AdminFileWidget):
+    """AdminFileWidget, но с принудительным default_storage=Azure."""
+    def __init__(self, attrs=None):
+        super().__init__(attrs)
+        self.storage = default_storage
+
+
+@admin.register(Student)
+class StudentAdmin(admin.ModelAdmin):
+    formfield_overrides = {
+        models.ImageField: {"widget": AzureAdminFileWidget},
+    }
 class EvidenceKeywordInline(admin.TabularInline):
     model = EvidenceKeyword
     extra = 1
@@ -145,14 +158,12 @@ class ApplicationAdmin(admin.ModelAdmin):
     list_display = (
         'id',
         'student',
-        'dormitory_cost',  # заменили несуществующее поле dormitory_choice на dormitory_cost
+        'dormitory_cost',
         'status',
         'approval',
         'created_at',
     )
     list_filter = ('status', 'approval', 'dormitory_cost')
-    # Заменили несуществующие search_fields на реальные:
-    # поиск по имени/фамилии студента и статусу
     search_fields = ('student__first_name', 'student__last_name', 'status')
     actions = ['approve_application', 'reject_application']
 

@@ -13,6 +13,8 @@ from rest_framework.parsers import MultiPartParser, FormParser
 import PyPDF2
 from rest_framework import permissions
 from django.core.files.storage import default_storage
+from rest_framework.permissions import IsAdminUser, AllowAny, SAFE_METHODS, BasePermission
+
 
 
 class IsStudent(IsAuthenticated):
@@ -33,12 +35,19 @@ def extract_text_from_pdf(file_obj):
     return text
 
 
+class IsAdminOrReadOnly(BasePermission):
+    """
+    Доступ на чтение для всех, на запись — только для админов.
+    """
+    def has_permission(self, request, view):
+        # SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+        if request.method in SAFE_METHODS:
+            return True
+        return bool(request.user and request.user.is_staff)
+
+
 def extract_ent_score_from_pdf(file_obj):
-    """
-    Читает весь текст из PDF (file_obj) и ищет шаблон вида:
-        <число> Барлығы/Итого
-    Возвращает найденное число (int) или выдаёт ValidationError, если не найдено.
-    """
+
     try:
         reader = PyPDF2.PdfReader(file_obj)
     except Exception as e:
@@ -51,9 +60,7 @@ def extract_ent_score_from_pdf(file_obj):
         except Exception:
             continue
 
-    # Иногда в PDF может быть перенос строки между числом и текстом, приведём всё к одной строке
     normalized = full_text.replace('\n', ' ')
-    # Ищем число перед словом "Барлығы" (каз.) или "Итого" (рус.), без учёта регистра
     pattern = r"(\d+)\s*(?:Барлығы|Итого)"
     match = re.search(pattern, normalized, flags=re.IGNORECASE)
     if not match:
@@ -88,36 +95,27 @@ class CreateApplicationView(APIView):
         if serializer.is_valid():
             try:
                 with transaction.atomic():
-                    # 1) Сохраняем саму заявку (пока без ent_result)
                     application = serializer.save(student=student, dormitory_cost=dormitory_cost)
 
-                    # 2) Проходим по всем загруженным файлам (request.FILES)
-                    #    Предполагается, что поле "ключ" – это код типа документа (EvidenceType.code)
-                    #    Если код соответствует сертификату ЕНТ, парсим оттуда балл.
+
                     for key, file in request.FILES.items():
                         try:
                             evidence_type = EvidenceType.objects.get(code=key)
                         except EvidenceType.DoesNotExist:
-                            # Если для данного кода нет типа доказательства — пропускаем
                             continue
 
                         if file.content_type != 'application/pdf':
                             raise ValidationError(f"Файл в поле '{key}' должен быть формата PDF.")
 
-                        # Если этот тип доказательства — сертификат ЕНТ (код, например, 'ent_certificate'),
-                        # то сразу извлекаем из него число и сохраняем в application.ent_result
+
                         if evidence_type.code == 'ent_certificate':
-                            # Обратите внимание: file — это InMemoryUploadedFile, поэтому перед чтением seek(0)
                             file.seek(0)
                             ent_score = extract_ent_score_from_pdf(file)
-                            # Сохраняем найденный балл в заявку и сбрасываем указатель
                             application.ent_result = ent_score
                             application.save()
-                            # Чтобы при повторном чтении PDF PyPDF2 не "потерял" поток, делаем seek(0) снова
                             file.seek(0)
                             continue
 
-                            # 3) Проверяем ключевые слова (если у EvidenceType указаны keywords)
                         extracted_text = ''
                         try:
                             file.seek(0)
@@ -125,7 +123,6 @@ class CreateApplicationView(APIView):
                             for page in reader.pages:
                                 extracted_text += page.extract_text() or ""
                         except Exception:
-                            # Если не удалось извлечь текст — будем дальше только сохранять файл
                             extracted_text = ''
 
                         keywords = evidence_type.keywords.all()
@@ -137,14 +134,12 @@ class CreateApplicationView(APIView):
                                 f"Загруженный файл для '{evidence_type.name}' не содержит необходимых ключевых слов."
                             )
 
-                        # 4) Если всё ок, создаём запись ApplicationEvidence
                         ApplicationEvidence.objects.create(
                             application=application,
                             evidence_type=evidence_type,
                             file=file
                         )
 
-                    # 5) Автозаполнение по data_type у остальных типов evidence
                     evidence_types_with_auto_fill = EvidenceType.objects.exclude(
                         auto_fill_field__isnull=True
                     ).exclude(auto_fill_field='')
@@ -161,8 +156,7 @@ class CreateApplicationView(APIView):
                                     numeric_value=student_value
                                 )
                             elif evidence_type.data_type == 'file':
-                                # Если auto_fill_field указывает на поле-файл в модели Student,
-                                # можно скопировать его внутрь ApplicationEvidence.file
+
                                 source_file = getattr(student, auto_field)
                                 if source_file:
                                     ApplicationEvidence.objects.create(
@@ -175,14 +169,12 @@ class CreateApplicationView(APIView):
                     {
                         "message": "Заявка успешно создана",
                         "application_id": application.id,
-                        # Дополнительно можем вернуть ent_result, если он был заполнен
                         "ent_result": application.ent_result
                     },
                     status=status.HTTP_201_CREATED
                 )
 
             except ValidationError as e:
-                # Откат транзакции при любой ошибке валидации
                 return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -198,13 +190,20 @@ class ApplicationStatusView(APIView):
         if not application:
             return Response({"error": "Заявки не найдены для данного студента"}, status=status.HTTP_404_NOT_FOUND)
 
+        if not application.test_result:
+            return Response({
+                "status": "Пройдите тест!",
+                "test_url": "http://127.0.0.1:8000/api/v1/test/"
+            }, status=status.HTTP_200_OK)
+
         if application.status == 'pending':
             return Response({"status": "Заявка на рассмотрении"}, status=status.HTTP_200_OK)
 
         if application.status == 'approved':
-            return Response({"status": "Ваша заявка одобрена, внесите оплату и прикрепите сюда чек.",
-                             "payment_url": "http://127.0.0.1:8000/api/v1/upload_payment_screenshot/"},
-                            status=status.HTTP_200_OK)
+            return Response({
+                "status": "Ваша заявка одобрена, внесите оплату и прикрепите сюда чек.",
+                "payment_url": "http://127.0.0.1:8000/api/v1/upload_payment_screenshot/"
+            }, status=status.HTTP_200_OK)
 
         if application.status == 'rejected':
             return Response({"status": "Ваша заявка была отклонена."}, status=status.HTTP_200_OK)
@@ -218,13 +217,14 @@ class ApplicationStatusView(APIView):
         if application.status == 'awaiting_order':
             return Response({"status": "Ваша заявка принята, ожидайте ордер на заселение."}, status=status.HTTP_200_OK)
 
-        student_in_dorm = StudentInDorm.objects.filter(application_id=application.id).first()
-        dormitory_name = student_in_dorm.room. dorm.name_ru
-        room = student_in_dorm.room.number
-
         if application.status == 'order':
-            return Response({"status": f"Поздравляем! Вам выдан ордер в общежитие: {dormitory_name}, комната {room}"},
-                            status=status.HTTP_200_OK)
+            student_in_dorm = StudentInDorm.objects.filter(application_id=application.id).first()
+            if student_in_dorm:
+                dormitory_name = student_in_dorm.room.dorm.name_ru
+                room = student_in_dorm.room.number
+                return Response({
+                    "status": f"Поздравляем! Вам выдан ордер в общежитие: {dormitory_name}, комната {room}"
+                }, status=status.HTTP_200_OK)
 
         return Response({"error": "Неизвестный статус заявки"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -344,7 +344,6 @@ class AvatarUploadView(APIView):
         if not avatar:
             return Response({'error': 'Файл не выбран'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Загружаем новый аватар
         student.avatar = avatar
         student.save()
 
@@ -357,23 +356,19 @@ class AvatarUploadView(APIView):
         student = request.user.student
 
         if student.avatar and student.avatar.name != 'avatar/no-avatar.png':
-            # Удаляем файл с диска, если он сейчас не “no-avatar.png”
             if default_storage.exists(student.avatar.name):
                 default_storage.delete(student.avatar.name)
 
-            # Вместо того, чтобы делать student.avatar.delete(),
-            # сразу присваиваем путь к дефолтному аватару:
+
             student.avatar = 'avatar/no-avatar.png'
             student.save()
 
             return Response({'message': 'Аватар удалён и восстановлен базовый.'}, status=status.HTTP_200_OK)
         else:
-            # Если уже стоит “avatar/no-avatar.png”, просто вернём ошибку, или можно вернуть 200, если хотите считать это “ничем не требующим действий”
             return Response({'error': 'Аватар уже не установлен.'}, status=status.HTTP_400_BAD_REQUEST)
 
 
 
-#upd
 class StudentApplicationUpdateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
@@ -395,7 +390,6 @@ class StudentApplicationUpdateView(APIView):
 
         data = request.data
 
-        # 1) Обновляем простые поля: dormitory_cost, parent_phone, ent_result
         changed = False
         for field in ("dormitory_cost", "parent_phone", "ent_result"):
             if field in data:
@@ -404,11 +398,7 @@ class StudentApplicationUpdateView(APIView):
         if changed:
             application.save()
 
-        # 2) Удаляем помеченные справки (delete_evidences[])
-        #    DRF при multipart/form-data с delete_evidences[] = [id1, id2,...]
-        #    отдаёт список через data.getlist("delete_evidences[]")
         deleted_ids = []
-        # если поле приходит как 'delete_evidences[]':
         delete_list = data.getlist("delete_evidences[]") or data.get("delete_evidences", [])
         for evidence_id in delete_list:
             try:
@@ -419,29 +409,23 @@ class StudentApplicationUpdateView(APIView):
             except (ValueError, ApplicationEvidence.DoesNotExist):
                 pass
 
-        # 3) Обрабатываем новые файлы (request.FILES).
-        #    Каждый ключ – это код EvidenceType, а значение – сам файл.
+
         added_evidences = []
         for key, uploaded_file in request.FILES.items():
-            # Пропустим, если это, например, файл ent_certificate (он обрабатывался выше через ent-extract)
-            # Но если вы хотите создавать ApplicationEvidence и для ent_certificate (например, чтобы хранить сам файл),
-            # тогда просто не делать фильтрацию по key == "ent_certificate".
+
             try:
                 evidence_type = EvidenceType.objects.get(code=key)
             except EvidenceType.DoesNotExist:
                 continue
 
-            # Создаём новую запись ApplicationEvidence
             new_ev = ApplicationEvidence.objects.create(
                 application=application,
                 evidence_type=evidence_type,
                 file=uploaded_file
             )
-            # Собираем данные для ответа
             serializer = ApplicationEvidenceSerializer(new_ev, context={'request': request})
             added_evidences.append(serializer.data)
 
-        # В конце отдаём клиенту актуальную заявку + списки добавленных и удалённых
         application.refresh_from_db()
         app_serializer = ApplicationSerializer(application, context={'request': request})
         return Response({

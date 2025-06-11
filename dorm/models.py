@@ -7,9 +7,27 @@ from auditlog.registry import auditlog
 import os
 import uuid
 from azure.storage.blob import BlobServiceClient
-
+from django.core.exceptions import ValidationError
+from .storage_backends import AzureMediaStorage
 
 from django.contrib.auth.hashers import make_password
+
+import os, uuid
+
+
+def avatar_upload_path(instance, filename):
+    ext = os.path.splitext(filename)[1].lower()
+    return f"avatars/temp_{uuid.uuid4().hex}{ext}"
+
+
+def upload_to_dorm_image(instance, filename):
+    ext = os.path.splitext(filename)[1].lower()
+    return f"dorm_images/temp_{uuid.uuid4().hex}{ext}"
+
+
+def evidences_upload_path(instance, filename):
+    ext = os.path.splitext(filename)[1].lower()
+    return f"evidences/temp_{uuid.uuid4().hex}{ext}"
 
 
 class Region(models.Model):
@@ -50,9 +68,6 @@ class UserManager(BaseUserManager):
 
         return self.create_user(s, password, **extra_fields)
 
-def avatar_upload_path(instance, filename):
-    # upload_to необходим, но фактический уникальный путь формируем в save()
-    return f"avatars/{filename}"
 
 class User(AbstractBaseUser, PermissionsMixin):
     GENDER_CHOICES = [
@@ -88,57 +103,54 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
         return f"{self.first_name} {self.last_name} {self.middle_name or ''}".strip()
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._original_avatar_name = self.avatar.name
+
+    def clean(self):
+        super().clean()
+        if self.s:
+            if not re.fullmatch(r"S\d{8}|F\d{8}", self.s.upper()):
+                raise ValidationError({'s': 'Должно быть "S" или "F" + 8 цифр.'})
+            self.s = self.s.upper()
+
     def save(self, *args, **kwargs):
-        # 1) Хешируем пароль, если он ещё не зашифрован
+        self.full_clean()
+
         if self.password and not self.password.startswith('pbkdf2_sha256$'):
             self.set_password(self.password)
 
-        # 2) Приводим s к верхнему регистру
-        if self.s:
-            self.s = self.s.upper()
-
-        # Определяем, сохраняем ли мы новый объект
         is_new = self.pk is None
-
-        # Сохраняем модель, чтобы получить self.pk
         super().save(*args, **kwargs)
 
-        # Если дефолтный аватар — сразу выходим
-        default_avatar = 'avatars/no-avatar.png'
-        if self.avatar.name == default_avatar:
+        current_name = self.avatar.name
+        if current_name == self._original_avatar_name:
             return
 
-        # Если это обновление и аватар не менялся — выходим
-        update_fields = kwargs.get('update_fields')
-        if not is_new and update_fields and 'avatars' not in update_fields:
+        if current_name == 'avatars/no-avatar.png':
             return
 
-        # Работаем с файлом аватара
         file_obj = getattr(self.avatar, 'file', None)
         if not file_obj:
             return
 
-        # Читаем содержимое
-        file_obj.seek(0)
-        data = file_obj.read()
-
-        # Формируем уникальный путь в контейнере Azure
-        ext = os.path.splitext(self.avatar.name)[1]
+        ext = os.path.splitext(current_name)[1].lower()
         unique_name = f"{uuid.uuid4().hex}{ext}"
         blob_path = f"avatars/user_{self.pk}/{unique_name}"
 
-        # Загружаем в Azure Blob Storage
-        service_client = BlobServiceClient(
+        file_obj.seek(0)
+        data = file_obj.read()
+        service = BlobServiceClient(
             account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
             credential=settings.AZURE_ACCOUNT_KEY
         )
-        container_client = service_client.get_container_client(settings.AZURE_CONTAINER)
-        blob_client = container_client.get_blob_client(blob_path)
-        blob_client.upload_blob(data, overwrite=True)
+        container = service.get_container_client(settings.AZURE_CONTAINER)
+        container.get_blob_client(blob_path).upload_blob(data, overwrite=True)
 
-        # Сохраняем новый путь в базе
         self.avatar.name = blob_path
         super().save(update_fields=['avatar'])
+
+        self._original_avatar_name = self.avatar.name
 
 
 class Student(User):
@@ -151,46 +163,10 @@ class Student(User):
         verbose_name = 'Student'
         verbose_name_plural = 'Students'
 
-    def save(self, *args, **kwargs):
-        if not re.fullmatch(r"S\d{8}", self.s):
-            raise ValueError(
-                'Student "s" must start with "S" followed by exactly eight digits, making it 9 characters long.')
-        # super().save(*args, **kwargs)
-
-        default_avatar = 'avatars/no-avatar.png'
-        # Если дефолтный аватар — СНАЧАЛА сохраняем, а потом просто выходим
-        if self.avatar.name == default_avatar:
-            super().save(*args, **kwargs)
-            return
-
-        is_new = self.pk is None
-        update_fields = kwargs.get('update_fields')
-        if not is_new and update_fields and 'avatars' not in update_fields:
-            super().save(*args, **kwargs)
-            return
-
-        file_obj = getattr(self.avatar, 'file', None)
-        if not file_obj:
-            super().save(*args, **kwargs)
-            return
-
-        file_obj.seek(0)
-        data = file_obj.read()
-
-        ext = os.path.splitext(self.avatar.name)[1]
-        unique_name = f"{uuid.uuid4().hex}{ext}"
-        blob_path = f"avatars/user_{self.pk}/{unique_name}"
-
-        service_client = BlobServiceClient(
-            account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
-            credential=settings.AZURE_ACCOUNT_KEY
-        )
-        container_client = service_client.get_container_client(settings.AZURE_CONTAINER)
-        blob_client = container_client.get_blob_client(blob_path)
-        blob_client.upload_blob(data, overwrite=True)
-
-        self.avatar.name = blob_path
-        super().save(update_fields=['avatar'])
+    def clean(self):
+        super().clean()
+        if self.s and not re.fullmatch(r"S\d{8}", self.s):
+            raise ValidationError({'s': 'Должно быть "S" и ровно 8 цифр.'})
 
 
 class Admin(User):
@@ -220,46 +196,10 @@ class Admin(User):
             ('can_manage_students', 'Can manage students'),
         ]
 
-    def save(self, *args, **kwargs):
-        if not re.fullmatch(r"F\d{8}", self.s):
-            raise ValueError(
-                'Admin "s" must start with "F" followed by exactly eight digits, making it 9 characters long.'
-            )
-
-        default_avatar = 'avatars/no-avatar.png'
-        # Если дефолтный аватар — СНАЧАЛА сохраняем, а потом просто выходим
-        if self.avatar.name == default_avatar:
-            super().save(*args, **kwargs)
-            return
-
-        is_new = self.pk is None
-        update_fields = kwargs.get('update_fields')
-        if not is_new and update_fields and 'avatars' not in update_fields:
-            super().save(*args, **kwargs)
-            return
-
-        file_obj = getattr(self.avatar, 'file', None)
-        if not file_obj:
-            super().save(*args, **kwargs)
-            return
-
-        file_obj.seek(0)
-        data = file_obj.read()
-
-        ext = os.path.splitext(self.avatar.name)[1]
-        unique_name = f"{uuid.uuid4().hex}{ext}"
-        blob_path = f"avatars/user_{self.pk}/{unique_name}"
-
-        service_client = BlobServiceClient(
-            account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
-            credential=settings.AZURE_ACCOUNT_KEY
-        )
-        container_client = service_client.get_container_client(settings.AZURE_CONTAINER)
-        blob_client = container_client.get_blob_client(blob_path)
-        blob_client.upload_blob(data, overwrite=True)
-
-        self.avatar.name = blob_path
-        super().save(update_fields=['avatar'])
+    def clean(self):
+        super().clean()
+        if self.s and not re.fullmatch(r"F\d{8}", self.s):
+            raise ValidationError({'s': 'Должно быть "F" и ровно 8 цифр.'})
 
 
 import re
@@ -287,17 +227,12 @@ class Dorm(models.Model):
     def __str__(self):
         return self.name_ru
 
-
     def floors_count(self) -> int:
-        """
-        Подсчитывает число уникальных этажей у этого общежития
-        по значению поля Room.floor.
-        """
         return (
             self.rooms
-            .values_list('floor', flat=True)  # забираем все floor для связанных комнат
-            .distinct()  # оставляем только уникальные значения
-            .count()  # считаем, сколько их
+            .values_list('floor', flat=True)
+            .distinct()
+            .count()
         )
 
 
@@ -318,7 +253,6 @@ class Room(models.Model):
         help_text="2, 3 или 4"
     )
 
-    # Добавляем реальное поле floor
     floor = models.PositiveSmallIntegerField(
         verbose_name="Этаж",
         editable=False,
@@ -330,16 +264,13 @@ class Room(models.Model):
         ordering = ['dorm', 'number']
 
     def save(self, *args, **kwargs):
-        """
-        При сохранении комнаты автоматически парсим первую
-        цифровую часть из номера и вычисляем этаж.
-        """
+
         match = re.match(r"^(\d+)", self.number)
         if match:
-            num = int(match.group(1))  # первая числовая группа, например "203" из "203A"
-            self.floor = num // 100  # 203 // 100 = 2 → 2-й этаж
+            num = int(match.group(1))
+            self.floor = num // 100
         else:
-            self.floor = 0  # нечитаемый формат номера
+            self.floor = 0
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -347,42 +278,43 @@ class Room(models.Model):
 
 
 class DormImage(models.Model):
-    dorm = models.ForeignKey(Dorm, on_delete=models.CASCADE)
-    image = models.ImageField(upload_to='dorm_images/', blank=True, null=True)
+    dorm = models.ForeignKey(Dorm, on_delete=models.CASCADE, related_name='images')
+    image = models.ImageField(
+        upload_to=upload_to_dorm_image,
+        blank=True,
+        null=True,
+        storage=AzureMediaStorage()
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._original_image_name = self.image.name
 
     def save(self, *args, **kwargs):
-        # 1) Сохраняем модель, чтобы получить self.pk (если новая запись)
         is_new = self.pk is None
+        file_obj = getattr(self.image, 'file', None)
         super().save(*args, **kwargs)
 
-        # 2) Проверяем, что в self.image действительно загружен файл (а не просто строка)
-        file_obj = getattr(self.image, 'file', None)
-        if not file_obj:
+        if not file_obj or self.image.name == self._original_image_name:
             return
 
-        # 3) Сбрасываем позицию чтения и читаем все байты
-        file_obj.seek(0)
-        data = file_obj.read()
-
-        # 4) Генерируем уникальное имя с тем же расширением
-        ext = os.path.splitext(self.image.name)[1]
+        ext = os.path.splitext(self.image.name)[1].lower()
         unique_name = f"{uuid.uuid4().hex}{ext}"
-
-        # 5) Формируем путь в контейнере: dorm_images/<unique_name>
         blob_path = f"dorm_images/{unique_name}"
 
-        # 6) Инициализируем клиент Azure и загружаем blob
-        service_client = BlobServiceClient(
+        file_obj.seek(0)
+        data = file_obj.read()
+        service = BlobServiceClient(
             account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
             credential=settings.AZURE_ACCOUNT_KEY
         )
-        container_client = service_client.get_container_client(settings.AZURE_CONTAINER)
-        blob_client = container_client.get_blob_client(blob_path)
-        blob_client.upload_blob(data, overwrite=True)
+        container = service.get_container_client(settings.AZURE_CONTAINER)
+        container.get_blob_client(blob_path).upload_blob(data, overwrite=True)
 
-        # 7) Обновляем в модели ключ blob-а и сохраняем только это поле
         self.image.name = blob_path
         super().save(update_fields=['image'])
+
+        self._original_image_name = blob_path
 
 
 class TestQuestion(models.Model):
@@ -395,7 +327,7 @@ class TestQuestion(models.Model):
     ]
 
     question_text_ru = models.TextField(blank=True, verbose_name="Вопрос (рус)", default="")
-    question_text_kk = models.TextField(blank=True, verbose_name="Сұрақ (қаз)", default="" )
+    question_text_kk = models.TextField(blank=True, verbose_name="Сұрақ (қаз)", default="")
     question_text_en = models.TextField(blank=True, verbose_name="Question (eng)", default="")
 
     answer_variant_a_en = models.TextField(blank=True, null=True, verbose_name="Variant a (eng)", default="")
@@ -446,7 +378,6 @@ class EvidenceType(models.Model):
         verbose_name="Поле автозаполнения"
     )
     keywords = models.ManyToManyField('Keyword', through='EvidenceKeyword', blank=True, verbose_name="Ключевые слова")
-
 
     def __str__(self):
         return self.code
@@ -500,7 +431,6 @@ class Application(models.Model):
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Время последнего обновления")
 
     def save(self, *args, **kwargs):
-        # 1) Обработка смены статуса (ваша существующая логика)...
         if self.pk is not None:
             try:
                 old = Application.objects.get(pk=self.pk)
@@ -509,22 +439,19 @@ class Application(models.Model):
             if old and old.status != self.status:
                 self._handle_status_change(old.status, self.status)
 
-        # 2) Вынимаем файл только если он реально есть
         file_obj = None
         if self.payment_screenshot and self.payment_screenshot.name:
             file_obj = self.payment_screenshot.file
 
-        # 3) Если это новая запись и есть файл — сохраняем сначала без файла, чтобы получить pk
         if self.pk is None and file_obj:
             temp = self.payment_screenshot
             self.payment_screenshot = None
-            super().save(*args, **kwargs)  # теперь у объекта есть pk
+            super().save(*args, **kwargs)
             self.payment_screenshot = temp
 
-        # 4) Основное сохранение модели
         super().save(*args, **kwargs)
 
-        # 5) Если был файл — загружаем его в Azure и обновляем только поле
+
         if file_obj:
             file_obj.seek(0)
             data = file_obj.read()
@@ -564,6 +491,7 @@ class Application(models.Model):
     def __str__(self):
         return f"Заявка от {self.student}"
 
+
 class StudentInRoom(models.Model):
     application = models.OneToOneField(Application, on_delete=models.CASCADE, related_name='assignment')
     room = models.ForeignKey(Room, on_delete=models.CASCADE, related_name='occupants')
@@ -580,18 +508,17 @@ class StudentInRoom(models.Model):
 class ApplicationEvidence(models.Model):
     application = models.ForeignKey(
         Application, on_delete=models.CASCADE,
-        related_name='evidences',
-        verbose_name="Заявка"
+        related_name='evidences', verbose_name="Заявка"
     )
     evidence_type = models.ForeignKey(
         EvidenceType, on_delete=models.CASCADE,
         verbose_name="Тип доказательства"
     )
     file = models.FileField(
-        upload_to='evidences/',
-        null=True,
-        blank=True,
-        verbose_name="Файл доказательства"
+        upload_to=evidences_upload_path,
+        null=True, blank=True,
+        verbose_name="Файл доказательства",
+        storage=AzureMediaStorage()
     )
     numeric_value = models.DecimalField(
         max_digits=6, decimal_places=2,
@@ -601,47 +528,43 @@ class ApplicationEvidence(models.Model):
     approved = models.BooleanField(
         null=True, blank=True,
         verbose_name="Одобрено",
-        help_text="Если True – справка одобрена, если False – отклонена, если None – не проверена"
+        help_text="True – одобрено, False – отклонено, None – не проверено"
     )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Время создания")
 
-    def save(self, *args, **kwargs):
-        # 1) Обработка первичного сохранения, чтобы получить self.pk (если новая запись)
-        file_obj = getattr(self.file, 'file', None)
-        if self.pk is None and file_obj:
-            temp = self.file
-            self.file = None
-            super().save(*args, **kwargs)
-            self.file = temp
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._original_file_name = self.file.name
 
-        # 2) Основное сохранение модели (без повторной загрузки файла)
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        file_obj = getattr(self.file, 'file', None)
         super().save(*args, **kwargs)
 
-        # 3) Если загружен файл – читаем, загружаем в Azure и обновляем только поле 'file'
-        if file_obj:
-            file_obj.seek(0)
-            data = file_obj.read()
+        if not file_obj or self.file.name == self._original_file_name:
+            return
 
-            # Генерируем уникальное имя с тем же расширением
-            ext = os.path.splitext(self.file.name)[1]
-            unique_name = f"{uuid.uuid4().hex}{ext}"
-            blob_path = f"evidences/{unique_name}"
+        ext = os.path.splitext(self.file.name)[1].lower()
+        unique_name = f"{uuid.uuid4().hex}{ext}"
+        blob_path = f"evidences/{unique_name}"
 
-            # Загружаем blob в Azure
-            service_client = BlobServiceClient(
-                account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
-                credential=settings.AZURE_ACCOUNT_KEY
-            )
-            container_client = service_client.get_container_client(settings.AZURE_CONTAINER)
-            blob_client = container_client.get_blob_client(blob_path)
-            blob_client.upload_blob(data, overwrite=True)
+        file_obj.seek(0)
+        data = file_obj.read()
+        service = BlobServiceClient(
+            account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
+            credential=settings.AZURE_ACCOUNT_KEY
+        )
+        container = service.get_container_client(settings.AZURE_CONTAINER)
+        container.get_blob_client(blob_path).upload_blob(data, overwrite=True)
 
-            # Обновляем в модели ключ blob-а и сохраняем только это поле
-            self.file.name = blob_path
-            super().save(update_fields=['file'])
+        self.file.name = blob_path
+        super().save(update_fields=['file'])
+
+        self._original_file_name = blob_path
 
     def __str__(self):
         return f"{self.application.id} – {self.evidence_type.name}"
+
 
 class Chat(models.Model):
     student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='chats')
@@ -736,7 +659,6 @@ class GlobalSettings(models.Model):
     class Meta:
         verbose_name = "Глобальная настройка"
         verbose_name_plural = "Глобальные настройки"
-
 
 
 auditlog.register(Student)

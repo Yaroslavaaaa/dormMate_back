@@ -22,17 +22,31 @@ from rest_framework import viewsets, permissions
 import requests
 from rest_framework.parsers import MultiPartParser, FormParser
 import PyPDF2
+from rest_framework.permissions import IsAdminUser, AllowAny, SAFE_METHODS, BasePermission
+
 
 
 class RegionListView(generics.ListAPIView):
     queryset = Region.objects.all()
     serializer_class = RegionSerializer
 
+
+class DormsReadOnlyOrAdmin(BasePermission):
+    """
+    Доступ на чтение всем, изменение — только если пользователь типа Admin.
+    """
+    def has_permission(self, request, view):
+        if request.method in SAFE_METHODS:
+            return True
+        # Проверка на аутентификацию и принадлежность к Admin
+        return (
+            request.user
+            and request.user.is_authenticated
+            and isinstance(request.user, Admin)
+        )
+
 class StudentInDormViewSet(viewsets.ModelViewSet):
-    """
-    Теперь этот ViewSet поддерживает GET (list/retrieve), POST, PATCH, PUT, DELETE и т.д.
-    Добавляем возможность фильтровать список по student_id через ?student_id=<id>.
-    """
+
     queryset = StudentInDorm.objects.select_related('student', 'room', 'application').all()
     serializer_class = StudentInDormSerializer
     permission_classes = [IsAuthenticated]
@@ -41,7 +55,6 @@ class StudentInDormViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         student_id = self.request.query_params.get('student_id')
         if student_id:
-            # если передали ?student_id=<id>, отфильтровываем
             qs = qs.filter(student__id=student_id)
         return qs
 
@@ -51,11 +64,8 @@ class TestQuestionViewSet(generics.ListAPIView):
     serializer_class = TestQuestionSerializer
 
 class StudentPagination(PageNumberPagination):
-    # По умолчанию будем отдавать 4 записи на страницу.
     page_size = 4
-    # Позволим клиенту сам выбирать page_size, передавая параметр ?page_size=...
     page_size_query_param = 'page_size'
-    # Максимальное число записей на страницу (при попытке запросить больше — всё равно вернётся page_size=4).
     max_page_size = 100
 
 
@@ -133,6 +143,26 @@ class IsStudentOrAdmin(IsAuthenticated):
         is_admin = request.user.is_staff or request.user.is_superuser
 
         return is_student or is_admin
+
+
+
+class DormsReadOnlyOrAdmin(BasePermission):
+    """
+    Доступ на чтение всем, запись — только для пользователей типа Admin.
+    """
+
+    def has_permission(self, request, view):
+        # Разрешаем GET, HEAD, OPTIONS всем
+        if request.method in SAFE_METHODS:
+            return True
+
+        # Для остальных запросов — только если это экземпляр Admin
+        user = request.user
+        # Неавторизованным отказать
+        if not user or not user.is_authenticated:
+            return False
+        # Проверка: пользователь — это Admin
+        return isinstance(user, Admin)
 
 
 class StudentDetailView(RetrieveUpdateAPIView):
@@ -215,7 +245,7 @@ class AdminNotificationListView(APIView):
 
         data = [{
             "id": n.id,
-            "message_ru": n.message,
+            "message_ru": n.message_ru,
             "created_at": n.created_at.isoformat()
         } for n in notifications]
         return Response(data, status=status.HTTP_200_OK)
@@ -257,7 +287,7 @@ class QuestionView(APIView):
     def get(self, request):
         search_query = request.query_params.get('search', '')
         if search_query:
-            answers = QuestionAnswer.objects.filter(question__icontains=search_query)
+            answers = QuestionAnswer.objects.filter(question_ru__icontains=search_query)
             if answers.exists():
                 data = [{"question": ans.question, "answer": ans.answer} for ans in answers]
                 return Response(data, status=status.HTTP_200_OK)
@@ -373,16 +403,12 @@ class SendMessageView(APIView):
         sender = request.user
         receiver = chat.student if sender.is_staff else User.objects.filter(is_staff=True).first()
 
-        # Сохраняем сообщение от пользователя
         Message.objects.create(chat=chat, sender=sender, receiver=receiver, content=text)
 
-        # Если пишет студент — обрабатываем ИИ
         if not sender.is_staff:
-            # Если оператор уже подключён — бот не отвечает
             if chat.is_operator_connected:
                 return Response({"status": "Сообщение отправлено"}, status=status.HTTP_201_CREATED)
 
-            # 🔗 Обращение к ИИ
             try:
                 ai_response = requests.post(
                     "https://a7ssmm.pythonanywhere.com/chat",
@@ -419,7 +445,6 @@ class SendMessageView(APIView):
             except Exception as e:
                 print("Ошибка запроса к ИИ:", e)
 
-            # Если бот не справился → уведомляем оператора
             admin = User.objects.filter(is_staff=True).first()
 
             if admin:
@@ -566,7 +591,6 @@ class IsAdminOrOwnerAndEditable(permissions.BasePermission):
 class ApplicationPagination(PageNumberPagination):
     page_size = 2
     page_size_query_param = 'page_size'
-    # max_page_size = 100
 
 
 class ApplicationViewSet(viewsets.ModelViewSet):
@@ -593,18 +617,13 @@ class ApplicationViewSet(viewsets.ModelViewSet):
 
 
 class DormsViewSet(viewsets.ModelViewSet):
-    """
-    Теперь поддерживается фильтрация по ?commandant=<admin_id>,
-    а также сохранился кастомный экшен count.
-    """
+
     serializer_class = DormSerializer
     pagination_class = StudentPagination
+    permission_classes = [DormsReadOnlyOrAdmin]
 
     def get_queryset(self):
-        """
-        Если в query_params есть commandant, фильтруем общежития по этому полю.
-        Иначе возвращаем все Dorm.
-        """
+
         qs = Dorm.objects.all()
         commandant_id = self.request.query_params.get("commandant")
         if commandant_id is not None:
@@ -613,18 +632,7 @@ class DormsViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def count(self, request):
-        """
-        Возвращает общее число общежитий (total_dorms)
-        и список объектов с количеством комнат разной вместимости:
-            - total_rooms
-            - rooms_for_2
-            - rooms_for_3
-            - rooms_for_4
 
-        Можно комбинировать с фильтром /api/dorms/count/?commandant=2, чтобы считать только
-        подчинённые конкретному коменданту.
-        """
-        # Базовый QuerySet, к которому применим те же фильтры, что и в get_queryset()
         base_qs = self.get_queryset()
 
         annotated = base_qs.annotate(
@@ -649,12 +657,7 @@ class DormsViewSet(viewsets.ModelViewSet):
 
 
 class RoomViewSet(viewsets.ModelViewSet):
-    """
-    Теперь RoomSerializer возвращает поля:
-      - assigned_students (список ФИО),
-      - free_spots (число свободных мест).
-    Можно фильтровать по dorm_id и floor через query params.
-    """
+
     queryset = Room.objects.all().select_related('dorm').prefetch_related('room_occupants__student')
     serializer_class = RoomSerializer
 
@@ -672,7 +675,6 @@ class RoomViewSet(viewsets.ModelViewSet):
 class AppsViewSet(viewsets.ModelViewSet):
     queryset = Application.objects.all()
     serializer_class = ApplicationSerializer
-    # permission_classes = [IsAdmin]
 
     @action(detail=False, methods=['get'])
     def count(self, request):
@@ -685,7 +687,12 @@ class DormImageViewSet(viewsets.ModelViewSet):
     queryset = DormImage.objects.all()
     serializer_class = DormImageSerializer
 
-    # permission_classes = [IsAdmin]
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        dorm_id = self.request.query_params.get('dorm')
+        if dorm_id:
+            queryset = queryset.filter(dorm_id=dorm_id)
+        return queryset
 
     def perform_create(self, serializer):
         dorm_id = self.request.data.get("dorm")
@@ -700,11 +707,9 @@ class DormImageViewSet(viewsets.ModelViewSet):
 
 
 
-
 class AppsViewSet(viewsets.ModelViewSet):
     queryset = Application.objects.all()
     serializer_class = ApplicationSerializer
-    # permission_classes = [IsAdmin]
 
     @action(detail=False, methods=['get'])
     def count(self, request):
@@ -781,22 +786,23 @@ class UserApplicationView(APIView):
         except Application.DoesNotExist:
             return Response({'detail': 'Заявка не найдена.'}, status=404)
 
-#upd
 class AdminViewSet(viewsets.ModelViewSet):
-    """
-    В этом ViewSet мы ожидаем, что `request.user` у нас уже является экземпляром Admin,
-    а значит нам не нужно делать Admin.objects.get(user=...). Достаточно просто
-    сериализовать request.user.
-    """
     queryset = Admin.objects.all()
     serializer_class = AdminSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     @action(detail=False, methods=["get"], url_path="me")
     def me(self, request):
-        # request.user уже тип Admin (потому что вы логинитесь как админ),
-        # просто сериализуем и возвращаем его:
-        serializer = self.get_serializer(request.user)
+        try:
+            # берём админа по тому же первичному ключу, что и user
+            admin_obj = Admin.objects.get(pk=request.user.pk)
+        except Admin.DoesNotExist:
+            return Response(
+                {"detail": "Admin profile not found."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = self.get_serializer(admin_obj)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 class ApplicationListView(ListAPIView):
@@ -825,16 +831,10 @@ class ApplicationEvidenceListView(APIView):
 
 
 class UNTReportView(APIView):
-    """
-    POST /api/ent-extract/
-    Принимает multipart/form-data с полем 'file':
-    - файл PDF с результатами ЕНТ/ҰБТ.
-    Возвращает JSON: { "total_score": <целое_число> }.
-    """
+
     parser_classes = (MultiPartParser, FormParser)
 
     def post(self, request, format=None):
-        # 1. Проверяем, что файл передан
         uploaded_file = request.FILES.get('file')
         if not uploaded_file:
             return Response(
@@ -842,7 +842,6 @@ class UNTReportView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 2. Пытаемся прочитать PDF с помощью PyPDF2
         try:
             reader = PyPDF2.PdfReader(uploaded_file)
         except Exception as e:
@@ -851,17 +850,13 @@ class UNTReportView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 3. Собираем текст со всех страниц
         full_text = ""
         for page in reader.pages:
             try:
                 full_text += page.extract_text() or ""
             except Exception:
-                # Если не удалось извлечь текст с какой-то страницы — пропускаем её
                 continue
 
-        # 4. Ищем итоговый балл с помощью регулярки
-        # Шаблон: любое число, за которым сразу идёт 'Барлығы' или 'Итого'
         pattern = r"(\d+)\s*(?:Барлығы|Итого)"
         match = re.search(pattern, full_text, flags=re.IGNORECASE)
         if not match:
@@ -872,5 +867,4 @@ class UNTReportView(APIView):
 
         total_score = int(match.group(1))
 
-        # 5. Возвращаем результат
         return Response({"total_score": total_score}, status=status.HTTP_200_OK)
