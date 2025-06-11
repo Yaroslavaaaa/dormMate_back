@@ -114,32 +114,32 @@ WSGI_APPLICATION = 'dormMate.wsgi.application'
 # }
 
 
-import os
-
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME', 'dormmate'),
-        'USER': os.getenv('DB_USER', 'postgres'),
-        'PASSWORD': os.getenv('DB_PASSWORD', 'ya242004'),
-        'HOST': os.getenv('DB_HOST', 'localhost'),
-        'PORT': os.getenv('DB_PORT', '5434'),
-    }
-}
-
-
-
+# import os
 
 # DATABASES = {
 #     'default': {
 #         'ENGINE': 'django.db.backends.postgresql',
-#         'NAME': 'dormmate',
-#         'USER': 'assem',
-#         'PASSWORD': 'LwrQmJ3C519FH880q2NeQTNnwDpfCoue',
-#         'HOST': 'dpg-d12ngrh5pdvs73cu87k0-a.frankfurt-postgres.render.com',
-#         'PORT': '5432',
+#         'NAME': os.getenv('DB_NAME', 'dormmate'),
+#         'USER': os.getenv('DB_USER', 'postgres'),
+#         'PASSWORD': os.getenv('DB_PASSWORD', 'ya242004'),
+#         'HOST': os.getenv('DB_HOST', 'localhost'),
+#         'PORT': os.getenv('DB_PORT', '5434'),
 #     }
 # }
+
+
+
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'dormmate',
+        'USER': 'assem',
+        'PASSWORD': 'LwrQmJ3C519FH880q2NeQTNnwDpfCoue',
+        'HOST': 'dpg-d12ngrh5pdvs73cu87k0-a.frankfurt-postgres.render.com',
+        'PORT': '5432',
+    }
+}
 
 
 # Password validation
