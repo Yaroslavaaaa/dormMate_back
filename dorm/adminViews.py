@@ -107,7 +107,6 @@ class MyAdminRoleAPIView(APIView):
         role_label = dict(Admin.ROLE_CHOICES).get(role_code, 'Неизвестная роль')
         return Response({'role': role_code, 'label': role_label})
 
-from fuzzywuzzy import process
 
 from datetime import datetime
 class ExcelUploadView(APIView):
