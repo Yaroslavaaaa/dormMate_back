@@ -44,7 +44,7 @@ urlpatterns = [
     # admins
     path('api/v1/distribute-students2/', DistributeStudentsAPIView2.as_view(), name='distribute-students'),
     path('api/v1/issue-order/', IssueOrderAPIView.as_view(), name='issue_order'),
-    path('api/v1/export-students/', ExportStudentInDormExcelView.as_view(), name='export_students_excel'),
+    path('api/v1/export-students/', ExportStudentsToExcelView.as_view(), name='export_students_excel'),
     path('api/v1/reminder/partial-payment/', SendPartialPaymentReminderAPIView.as_view(),
          name='partial_payment_reminder'),
     path('api/v1/generate-selection/', GenerateSelectionAPIView.as_view(), name='generate-selection'),

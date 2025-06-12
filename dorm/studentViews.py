@@ -384,12 +384,12 @@ class AvatarUploadView(APIView):
     def delete(self, request):
         student = request.user.student
 
-        if student.avatar and student.avatar.name != 'avatar/no-avatar.png':
+        if student.avatar and student.avatar.name != 'avatars/no-avatar.png':
             if default_storage.exists(student.avatar.name):
                 default_storage.delete(student.avatar.name)
 
 
-            student.avatar = 'avatar/no-avatar.png'
+            student.avatar = 'avatars/no-avatar.png'
             student.save()
 
             return Response({'message': 'Аватар удалён и восстановлен базовый.'}, status=status.HTTP_200_OK)

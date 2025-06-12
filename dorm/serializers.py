@@ -53,9 +53,10 @@ class GlobalSettingsSerializer(SanitizedModelSerializer):
 
 
 class AdminSerializer(SanitizedModelSerializer):
+    # Убираем read_only, чтобы роль можно было передать
     role = serializers.ChoiceField(
         choices=Admin.ROLE_CHOICES,
-        read_only=True
+        required=False  # Это позволит передавать роль, но она будет опциональной
     )
     password = serializers.CharField(write_only=True, required=False)
 
@@ -66,7 +67,8 @@ class AdminSerializer(SanitizedModelSerializer):
             'email', 'birth_date', 'phone_number', 'avatar', 'gender',
             'is_active', 'is_staff', 'role', 'password',
         ]
-        read_only_fields = ['id', 'is_staff', 'role']
+        # Убираем read_only для role
+        read_only_fields = ['id', 'is_staff']
 
     def validate_s(self, value):
         if not re.fullmatch(r'F\d{8}', value):
@@ -76,11 +78,15 @@ class AdminSerializer(SanitizedModelSerializer):
         return value.upper()
 
     def create(self, validated_data):
-        password = validated_data.pop('password')
+        password = validated_data.pop('password', None)
         print("Creating admin with data:", validated_data)
+
+        # Убедитесь, что роль установлена, если она передана
+        role = validated_data.get('role', Admin.ROLE_OPERATOR)  # По умолчанию роль будет "OP"
         admin = Admin(**validated_data)
+        admin.role = role  # Устанавливаем роль из переданных данных
         admin.set_password(password)
-        admin.is_staff = True
+        admin.is_staff = True  # Убедитесь, что администратор имеет права staff
         admin.save()
         print("Created admin id:", admin.id)
         return admin
@@ -93,6 +99,7 @@ class AdminSerializer(SanitizedModelSerializer):
             instance.set_password(password)
         instance.save()
         return instance
+
 
 
 class RegionSerializer(SanitizedModelSerializer):
@@ -298,7 +305,7 @@ class ApplicationSerializer(SanitizedModelSerializer):
     ent_result = serializers.IntegerField(required=False, allow_null=True)
     test_answers = serializers.JSONField(required=False, allow_null=True)
     test_result = serializers.CharField(required=False, allow_null=True)
-
+    payment_screenshot = serializers.FileField(required=False, allow_null=True)
 
     class Meta:
         model = Application
@@ -331,6 +338,13 @@ class ApplicationSerializer(SanitizedModelSerializer):
 
     def update(self, instance, validated_data):
         evidences_data = validated_data.pop('evidences', None)
+
+        # Обработка поля ent_result
+        if 'ent_result' in validated_data:
+            ent_result = validated_data['ent_result']
+            # Преобразуем значение в целое число
+            validated_data['ent_result'] = int(float(ent_result))
+
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()

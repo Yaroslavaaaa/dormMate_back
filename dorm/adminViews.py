@@ -744,6 +744,52 @@ class DeleteStudentApplicationAPIView(APIView):
         return Response({"message": "Заявка успешно удалена"}, status=status.HTTP_200_OK)
 
 
+from openpyxl import Workbook
+from django.views import View
+
+class ExportStudentsToExcelView(View):
+    def get(self, request, *args, **kwargs):
+        # Создаем рабочую книгу и активный лист
+        wb = Workbook()
+        sheet = wb.active
+        sheet.title = "Students"
+
+        # Устанавливаем заголовки
+        headers = ["S Студента", "Фамилия", "Имя", "Отчество", "Общежитие", "Комната", "ID Заявления", "Ордер", "ИИН"]
+        sheet.append(headers)
+
+        # Получаем данные студентов с привязкой к общежитию и комнате
+        students = StudentInDorm.objects.select_related('student', 'room', 'room__dorm').all()
+
+        # Заполняем данными
+        for student_in_dorm in students:
+            student = student_in_dorm.student
+            dormitory = student_in_dorm.room.dorm if student_in_dorm.application else None
+            room = student_in_dorm.room
+
+            # Данные для экспорта
+            row = [
+                student.s,                           # S Студента
+                student.last_name,                   # Фамилия
+                student.first_name,                  # Имя
+                student.middle_name,                 # Отчество
+                dormitory.name_ru if dormitory else '', # Общежитие
+                room.number if room else '',         # Комната
+                student_in_dorm.application.id if student_in_dorm.application else '', # ID Заявления
+                student_in_dorm.order.name if student_in_dorm.order else '', # Ордер
+                student.iin if student.iin else ''   # ИИН
+            ]
+            sheet.append(row)
+
+        # Настройка заголовков HTTP-ответа для скачивания файла
+        response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        response['Content-Disposition'] = 'attachment; filename="students_export.xlsx"'
+
+        # Сохраняем файл в ответ
+        wb.save(response)
+        return response
+
+
 class ExportStudentInDormExcelView(APIView):
     permission_classes = [IsAdmin]
 
@@ -755,26 +801,30 @@ class ExportStudentInDormExcelView(APIView):
         headers = ["S Студента", "Фамилия", "Имя", "Отчество", "Общежитие", "Комната", "ID Заявления", "Ордер", "ИИН"]
         sheet.append(headers)
 
-        students_in_dorm = StudentInDorm.objects.select_related('student_id', 'dorm_id', 'application_id')
+        # Получаем студентов из базы данных
+        students_in_dorm = StudentInDorm.objects.select_related('student', 'application')
+
         for student_dorm in students_in_dorm:
-            student = student_dorm.student_id
+            student = student_dorm.student
             row = [
                 getattr(student, 's', "Нет данных"),
                 getattr(student, 'last_name', "Нет данных"),
                 getattr(student, 'first_name', "Нет данных"),
                 getattr(student, 'middle_name', "Нет данных"),
-                getattr(student_dorm.dorm_id, 'name', "Нет данных"),
-                student_dorm.room or "Нет данных",
-                student_dorm.application_id.id if student_dorm.application_id else "Нет данных",
+                getattr(student_dorm.room.dorm, 'name_ru', "Нет данных"),
+                student_dorm.room.number or "Нет данных",
+                student_dorm.application.id if student_dorm.application else "Нет данных",
                 student_dorm.order.url if student_dorm.order else "Нет",
                 getattr(student, 'iin', "Нет данных"),
             ]
             sheet.append(row)
 
+        # Сохраняем Excel файл в памяти (в BytesIO)
         output = BytesIO()
         workbook.save(output)
         output.seek(0)
 
+        # Отправляем правильный тип контента для файла Excel
         response = HttpResponse(
             output,
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

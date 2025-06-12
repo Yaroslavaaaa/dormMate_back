@@ -206,7 +206,7 @@ class IsStudent(IsAuthenticated):
 
 
 class KeywordViewSet(viewsets.ModelViewSet):
-    queryset = Keyword.objects.all()
+    queryset = Keyword.objects.all().order_by('id')
     serializer_class = KeywordSerializer
     permission_classes = [IsAdmin]
     pagination_class = StudentPagination
@@ -445,21 +445,21 @@ class SendMessageView(APIView):
             except Exception as e:
                 print("Ошибка запроса к ИИ:", e)
 
-            admin = User.objects.filter(is_staff=True).first()
-
-            if admin:
-                Notification.objects.create(
-                    recipient=admin,
-                    message_ru=f"Новый вопрос в чате #{chat.id}, требуется участие оператора."
-                )
-
-                Message.objects.create(
-                    chat=chat,
-                    sender=admin,
-                    receiver=sender,
-                    content="Здравствуйте! Я подключаюсь к вам как оператор. Чем могу помочь?",
-                    is_from_bot=True
-                )
+            # admin = User.objects.filter(is_staff=True).first()
+            #
+            # if admin:
+            #     Notification.objects.create(
+            #         recipient=admin,
+            #         message_ru=f"Новый вопрос в чате #{chat.id}, требуется участие оператора."
+            #     )
+            #
+            #     Message.objects.create(
+            #         chat=chat,
+            #         sender=admin,
+            #         receiver=sender,
+            #         content="Здравствуйте! Я подключаюсь к вам как оператор. Чем могу помочь?",
+            #         is_from_bot=True
+            #     )
 
             return Response({"status": "Оператор уведомлён, бот не смог ответить"}, status=status.HTTP_200_OK)
 
@@ -620,11 +620,11 @@ class DormsViewSet(viewsets.ModelViewSet):
 
     serializer_class = DormSerializer
     pagination_class = StudentPagination
-    permission_classes = [DormsReadOnlyOrAdmin]
+    # permission_classes = [DormsReadOnlyOrAdmin]
 
     def get_queryset(self):
 
-        qs = Dorm.objects.all()
+        qs = Dorm.objects.all().order_by('id')
         commandant_id = self.request.query_params.get("commandant")
         if commandant_id is not None:
             qs = qs.filter(commandant_id=commandant_id)
@@ -741,7 +741,7 @@ class GlobalSettingsAPIView(APIView):
 
 
 class StudentsViewSet(viewsets.ModelViewSet):
-    queryset = Student.objects.all()
+    queryset = Student.objects.all().order_by('id')
     serializer_class = StudentSerializer
     pagination_class = StudentPagination
 
@@ -787,7 +787,7 @@ class UserApplicationView(APIView):
             return Response({'detail': 'Заявка не найдена.'}, status=404)
 
 class AdminViewSet(viewsets.ModelViewSet):
-    queryset = Admin.objects.all()
+    queryset = Admin.objects.all().order_by('id')
     serializer_class = AdminSerializer
     permission_classes = [permissions.IsAuthenticated]
 

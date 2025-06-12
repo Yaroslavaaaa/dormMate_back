@@ -391,6 +391,13 @@ class EvidenceKeyword(models.Model):
     def __str__(self):
         return f"{self.evidence_type.name} - {self.keyword.keyword}"
 
+def upload_to_payment_screenshot(instance, filename):
+    """
+    Генерация уникального пути для файла с квитанцией в Azure Blob Storage.
+    Формируем путь вида: payments/user_<pk>/<uuid4>.<ext>
+    """
+    ext = os.path.splitext(filename)[1].lower()
+    return f"payments/user_{instance.pk or 'new'}/{uuid.uuid4().hex}{ext}"
 
 class Application(models.Model):
     STATUS_CHOICES = [
@@ -401,6 +408,7 @@ class Application(models.Model):
         ('awaiting_order', 'Ожидание ордера'),
         ('order', 'Ордер получен'),
     ]
+
 
     student = models.OneToOneField(
         Student, on_delete=models.CASCADE,
@@ -418,10 +426,11 @@ class Application(models.Model):
     test_result = models.CharField(max_length=1, null=True, blank=True, verbose_name="Результат теста")
 
     payment_screenshot = models.FileField(
-        upload_to='payments/',
+        upload_to=upload_to_payment_screenshot,
         null=True,
         blank=True,
-        verbose_name="Скрин оплаты"
+        verbose_name="Скрин оплаты",
+        storage = AzureMediaStorage()
     )
 
     is_full_payment = models.BooleanField(null=True, blank=True, verbose_name="Полная оплата")
@@ -430,53 +439,54 @@ class Application(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Время создания")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Время последнего обновления")
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Сохраняем старое имя файла для проверки, изменился ли он
+        self._original_payment_screenshot = self.payment_screenshot.name if self.payment_screenshot else None
+
     def save(self, *args, **kwargs):
-        if self.pk is not None:
-            try:
-                old = Application.objects.get(pk=self.pk)
-            except Application.DoesNotExist:
-                old = None
-            if old and old.status != self.status:
-                self._handle_status_change(old.status, self.status)
+        if not self.payment_screenshot:
+            return super().save(*args, **kwargs)
 
-        file_obj = None
-        if self.payment_screenshot and self.payment_screenshot.name:
-            file_obj = self.payment_screenshot.file
+        file_obj = getattr(self.payment_screenshot, 'file', None)
 
-        if self.pk is None and file_obj:
-            temp = self.payment_screenshot
+        if not file_obj:
             self.payment_screenshot = None
-            super().save(*args, **kwargs)
-            self.payment_screenshot = temp
+            return super().save(*args, **kwargs)
+
+        print(f"File found: {self.payment_screenshot.name}, uploading to Azure.")
 
         super().save(*args, **kwargs)
 
+        ext = os.path.splitext(self.payment_screenshot.name)[1].lower()
+        unique_name = f"{uuid.uuid4().hex}{ext}"
+        blob_path = f"payments/user_{self.pk}/{unique_name}"
 
-        if file_obj:
-            file_obj.seek(0)
-            data = file_obj.read()
-            ext = os.path.splitext(self.payment_screenshot.name)[1]
-            unique_name = f"{uuid.uuid4().hex}{ext}"
-            blob_path = f"payments/{unique_name}"
+        file_obj.seek(0)
+        data = file_obj.read()
+        service_client = BlobServiceClient(
+            account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
+            credential=settings.AZURE_ACCOUNT_KEY
+        )
+        container_client = service_client.get_container_client(settings.AZURE_CONTAINER)
+        blob_client = container_client.get_blob_client(blob_path)
+        blob_client.upload_blob(data, overwrite=True)
 
-            service_client = BlobServiceClient(
-                account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
-                credential=settings.AZURE_ACCOUNT_KEY
-            )
-            container_client = service_client.get_container_client(settings.AZURE_CONTAINER)
-            blob_client = container_client.get_blob_client(blob_path)
-            blob_client.upload_blob(data, overwrite=True)
+        self.payment_screenshot.name = blob_path
+        super().save(update_fields=['payment_screenshot'])
 
-            self.payment_screenshot.name = blob_path
-            super().save(update_fields=['payment_screenshot'])
+        self._original_payment_screenshot = self.payment_screenshot.name
+        print(f"File uploaded to Azure: {self.payment_screenshot.name}")
+
+
 
     def _handle_status_change(self, old_status, new_status):
         user = self.student
         messages = {
             'rejected': 'Статус заявки был изменен. Ваша заявка отклонена.',
-            'awaiting_payment': 'Статус заявки был изменен. Ваша заявка одобрена. Внесите оплату и прикрепите квитанцию в профиле в разделе статус заявки.',
+            'awaiting_payment': 'Статус заявки был изменен. Ваша заявка одобрена. Внесите оплату и прикрепите квитанцию в профиле.',
             'awaiting_order': 'Статус заявки был изменен. Оплата подтверждена. Ожидайте ордер на заселение.',
-            'order': 'Статус заявки был изменен. Ваш ордер готов! Детали можете посмотреть в профиле в разделе статус заявки.'
+            'order': 'Статус заявки был изменен. Ваш ордер готов! Подробнее в профиле.'
         }
         if new_status in messages:
             Notification.objects.create(recipient=user, message_ru=messages[new_status])
