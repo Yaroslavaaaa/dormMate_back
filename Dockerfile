@@ -1,5 +1,5 @@
-# Используем Python 3.10 или более новую версию
-FROM python:3.11-slim
+# Используем Python 3.9 (или Python 3.10) вместо Python 3.11
+FROM python:3.9-slim
 
 # Устанавливаем pip и обновляем его
 RUN pip install --upgrade pip
@@ -8,13 +8,15 @@ RUN pip install --upgrade pip
 COPY requirements.txt .
 
 # Устанавливаем зависимости, избегая кеширования
-RUN pip install --no-cache-dir -r requirements.txt
+# Включаем установку зависимостей только для Linux (исключаем pywin32)
+RUN sed -i '/pywin32/d' requirements.txt && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Копируем исходный код
+# Копируем код проекта в контейнер
 COPY . /app
 
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Запуск приложения (например, Django)
+# Запуск приложения (например, для Django)
 CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
