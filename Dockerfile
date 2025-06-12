@@ -1,18 +1,16 @@
-# Используем Python 3.9 (или Python 3.10) вместо Python 3.11
-FROM python:3.9-slim
+# Используем Python 3.10
+FROM python:3.10-slim
 
-# Устанавливаем pip и обновляем его
+# Обновляем pip
 RUN pip install --upgrade pip
 
 # Копируем файл зависимостей
 COPY requirements.txt .
 
 # Устанавливаем зависимости, избегая кеширования
-# Включаем установку зависимостей только для Linux (исключаем pywin32)
-RUN sed -i '/pywin32/d' requirements.txt && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Копируем код проекта в контейнер
+# Копируем код проекта
 COPY . /app
 
 # Устанавливаем рабочую директорию
