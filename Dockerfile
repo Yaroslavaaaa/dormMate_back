@@ -1,28 +1,20 @@
-# 1. Базовый образ Python
-FROM python:3.11-slim
+# Используем образ Python 3.9 (или другую версию, которая совместима)
+FROM python:3.9-slim
 
-# 2. Установка системных зависимостей (при необходимости)
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Установим pip
+RUN pip install --upgrade pip
 
-# 3. Установка рабочей директории
-WORKDIR /app
-
-# 4. Копирование зависимостей
+# Копируем файл зависимостей
 COPY requirements.txt .
 
-# 5. Установка Python-зависимостей
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+# Устанавливаем зависимости, избегая кеширования
+RUN pip install --no-cache-dir -r requirements.txt
 
-# 6. Копирование исходного кода проекта
-COPY . .
+# Копируем код проекта в контейнер
+COPY . /app
 
-# 7. EXPOSE: Для локальной отладки (Cloud Run игнорирует)
-EXPOSE 8080
+# Устанавливаем рабочую директорию
+WORKDIR /app
 
-# 8. Команда запуска:
-#   - Важно: слушаем порт 8080 (Cloud Run ждёт именно его!)
-CMD ["gunicorn", "dormMate.wsgi:application", "--bind", "0.0.0.0:8080"]
+# Запуск приложения (пример для Django)
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
