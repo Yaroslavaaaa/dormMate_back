@@ -53,10 +53,9 @@ class GlobalSettingsSerializer(SanitizedModelSerializer):
 
 
 class AdminSerializer(SanitizedModelSerializer):
-    # Убираем read_only, чтобы роль можно было передать
     role = serializers.ChoiceField(
         choices=Admin.ROLE_CHOICES,
-        required=False  # Это позволит передавать роль, но она будет опциональной
+        required=False
     )
     password = serializers.CharField(write_only=True, required=False)
 
@@ -67,7 +66,6 @@ class AdminSerializer(SanitizedModelSerializer):
             'email', 'birth_date', 'phone_number', 'avatar', 'gender',
             'is_active', 'is_staff', 'role', 'password',
         ]
-        # Убираем read_only для role
         read_only_fields = ['id', 'is_staff']
 
     def validate_s(self, value):
@@ -81,12 +79,11 @@ class AdminSerializer(SanitizedModelSerializer):
         password = validated_data.pop('password', None)
         print("Creating admin with data:", validated_data)
 
-        # Убедитесь, что роль установлена, если она передана
-        role = validated_data.get('role', Admin.ROLE_OPERATOR)  # По умолчанию роль будет "OP"
+        role = validated_data.get('role', Admin.ROLE_OPERATOR)
         admin = Admin(**validated_data)
-        admin.role = role  # Устанавливаем роль из переданных данных
+        admin.role = role
         admin.set_password(password)
-        admin.is_staff = True  # Убедитесь, что администратор имеет права staff
+        admin.is_staff = True
         admin.save()
         print("Created admin id:", admin.id)
         return admin
@@ -339,10 +336,8 @@ class ApplicationSerializer(SanitizedModelSerializer):
     def update(self, instance, validated_data):
         evidences_data = validated_data.pop('evidences', None)
 
-        # Обработка поля ent_result
         if 'ent_result' in validated_data:
             ent_result = validated_data['ent_result']
-            # Преобразуем значение в целое число
             validated_data['ent_result'] = int(float(ent_result))
 
         for attr, value in validated_data.items():

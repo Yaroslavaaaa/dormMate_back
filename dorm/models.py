@@ -48,6 +48,9 @@ class UserManager(BaseUserManager):
         if not password and 'birth_date' in extra_fields:
             password = extra_fields['birth_date'].strftime('%d%m%Y')
 
+        if not password:
+            raise ValueError("Password must be provided.")
+
         user.set_password(password)
         user.save(using=self._db)
         return user
@@ -67,6 +70,7 @@ class UserManager(BaseUserManager):
                 'Superuser "s" must start with "F" followed by exactly eight digits, making it 9 characters long.')
 
         return self.create_user(s, password, **extra_fields)
+
 
 
 class User(AbstractBaseUser, PermissionsMixin):
@@ -115,9 +119,10 @@ class User(AbstractBaseUser, PermissionsMixin):
             self.s = self.s.upper()
 
     def save(self, *args, **kwargs):
-        self.full_clean()
+        if not self.password:
+            raise ValueError("Password must be provided.")
 
-        if self.password and not self.password.startswith('pbkdf2_sha256$'):
+        if not self.password.startswith('pbkdf2_sha256$'):
             self.set_password(self.password)
 
         is_new = self.pk is None
@@ -167,6 +172,15 @@ class Student(User):
         super().clean()
         if self.s and not re.fullmatch(r"S\d{8}", self.s):
             raise ValidationError({'s': 'Должно быть "S" и ровно 8 цифр.'})
+
+    def save(self, *args, **kwargs):
+        if not self.password and self.birth_date:
+            self.password = self.birth_date.strftime('%d%m%Y')
+
+        if not self.password:
+            raise ValueError("Password must be provided.")
+
+        super().save(*args, **kwargs)
 
 
 class Admin(User):
@@ -288,33 +302,33 @@ class DormImage(models.Model):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._original_image_name = self.image.name
+        if self.image:
+            self._original_image_name = self.image.name
 
     def save(self, *args, **kwargs):
         is_new = self.pk is None
         file_obj = getattr(self.image, 'file', None)
+
+        if self.image and (not hasattr(self, '_original_image_name') or self.image.name != self._original_image_name):
+            ext = os.path.splitext(self.image.name)[1].lower()
+            unique_name = f"{uuid.uuid4().hex}{ext}"
+            blob_path = f"dorm_images/{unique_name}"
+
+            file_obj.seek(0)
+            data = file_obj.read()
+            service = BlobServiceClient(
+                account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
+                credential=settings.AZURE_ACCOUNT_KEY
+            )
+            container = service.get_container_client(settings.AZURE_CONTAINER)
+            container.get_blob_client(blob_path).upload_blob(data, overwrite=True)
+
+            self.image.name = blob_path
+
         super().save(*args, **kwargs)
 
-        if not file_obj or self.image.name == self._original_image_name:
-            return
-
-        ext = os.path.splitext(self.image.name)[1].lower()
-        unique_name = f"{uuid.uuid4().hex}{ext}"
-        blob_path = f"dorm_images/{unique_name}"
-
-        file_obj.seek(0)
-        data = file_obj.read()
-        service = BlobServiceClient(
-            account_url=f"https://{settings.AZURE_ACCOUNT_NAME}.blob.core.windows.net",
-            credential=settings.AZURE_ACCOUNT_KEY
-        )
-        container = service.get_container_client(settings.AZURE_CONTAINER)
-        container.get_blob_client(blob_path).upload_blob(data, overwrite=True)
-
-        self.image.name = blob_path
-        super().save(update_fields=['image'])
-
-        self._original_image_name = blob_path
+        if self.image:
+            self._original_image_name = self.image.name
 
 
 class TestQuestion(models.Model):
@@ -392,10 +406,6 @@ class EvidenceKeyword(models.Model):
         return f"{self.evidence_type.name} - {self.keyword.keyword}"
 
 def upload_to_payment_screenshot(instance, filename):
-    """
-    Генерация уникального пути для файла с квитанцией в Azure Blob Storage.
-    Формируем путь вида: payments/user_<pk>/<uuid4>.<ext>
-    """
     ext = os.path.splitext(filename)[1].lower()
     return f"payments/user_{instance.pk or 'new'}/{uuid.uuid4().hex}{ext}"
 
@@ -441,7 +451,6 @@ class Application(models.Model):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Сохраняем старое имя файла для проверки, изменился ли он
         self._original_payment_screenshot = self.payment_screenshot.name if self.payment_screenshot else None
 
     def save(self, *args, **kwargs):

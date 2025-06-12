@@ -35,6 +35,7 @@ urlpatterns = [
     path('api/v1/applications/<int:pk>/payment-screenshot/', PaymentScreenshotView.as_view(),
          name='payment_screenshot'),
     path('api/v1/questionlist', TestQuestionViewSet.as_view()),
+    path('api/v1/application_status_react/', ApplicationStatusViewReact.as_view(), name='application_status_react'),
 
     # students
     path('api/v1/upload-avatar/', AvatarUploadView.as_view(), name='upload-avatar'),

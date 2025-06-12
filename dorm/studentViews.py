@@ -36,9 +36,7 @@ def extract_text_from_pdf(file_obj):
 
 
 class IsAdminOrReadOnly(BasePermission):
-    """
-    Доступ на чтение для всех, на запись — только для админов.
-    """
+
     def has_permission(self, request, view):
         # SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
         if request.method in SAFE_METHODS:
@@ -47,7 +45,6 @@ class IsAdminOrReadOnly(BasePermission):
 
 
 def extract_ent_score_from_pdf(file_obj):
-
     try:
         reader = PyPDF2.PdfReader(file_obj)
     except Exception as e:
@@ -97,7 +94,6 @@ class CreateApplicationView(APIView):
                 with transaction.atomic():
                     application = serializer.save(student=student, dormitory_cost=dormitory_cost)
 
-
                     for key, file in request.FILES.items():
                         try:
                             evidence_type = EvidenceType.objects.get(code=key)
@@ -106,7 +102,6 @@ class CreateApplicationView(APIView):
 
                         if file.content_type != 'application/pdf':
                             raise ValidationError(f"Файл в поле '{key}' должен быть формата PDF.")
-
 
                         if evidence_type.code == 'ent_certificate':
                             file.seek(0)
@@ -187,18 +182,16 @@ class ApplicationStatusView(APIView):
         return APPLICATION_STATUS_TRANSLATIONS.get(status_code, {}).get(lang, status_code)
 
     def get(self, request):
-        lang = request.query_params.get('lang', 'ru')  # Получаем язык из параметра
+        lang = request.query_params.get('lang', 'ru')
         student_id = request.user.student.id
         application = Application.objects.filter(student__id=student_id).first()
 
-        # Если заявка не найдена
         if not application:
             return Response({
                 "status": "no_application",
                 "status_text": self.get_status_translation("no_application", lang)
             }, status=status.HTTP_200_OK)
 
-        # Если тест не пройден
         if not application.test_result:
             return Response({
                 "status": "test_not_passed",
@@ -206,14 +199,12 @@ class ApplicationStatusView(APIView):
                 "test_url": "/api/v1/test/"
             }, status=status.HTTP_200_OK)
 
-        # Статус "На рассмотрении"
         if application.status == 'pending':
             return Response({
                 "status": "pending",
                 "status_text": self.get_status_translation("pending", lang)
             }, status=status.HTTP_200_OK)
 
-        # Статус "Одобрено" или "Ожидание оплаты"
         if application.status in ['approved', 'awaiting_payment']:
             return Response({
                 "status": "awaiting_payment",
@@ -221,21 +212,18 @@ class ApplicationStatusView(APIView):
                 "payment_url": "/api/v1/upload_payment_screenshot/"
             }, status=status.HTTP_200_OK)
 
-        # Статус "Отклонено"
         if application.status == 'rejected':
             return Response({
                 "status": "rejected",
                 "status_text": self.get_status_translation("rejected", lang)
             }, status=status.HTTP_200_OK)
 
-        # Статус "Ожидаем ордер"
         if application.status == 'awaiting_order':
             return Response({
                 "status": "awaiting_order",
                 "status_text": self.get_status_translation("awaiting_order", lang)
             }, status=status.HTTP_200_OK)
 
-        # Статус "Ордер получен"
         if application.status == 'order':
             student_in_dorm = StudentInDorm.objects.filter(application_id=application.id).first()
             order_details = None
@@ -252,11 +240,61 @@ class ApplicationStatusView(APIView):
                 "order_details": order_details
             }, status=status.HTTP_200_OK)
 
-        # Неизвестный статус
         return Response({
             "status": "unknown",
             "status_text": self.get_status_translation("unknown", lang)
         }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ApplicationStatusViewReact(APIView):
+    permission_classes = [IsStudent]
+
+    def get(self, request):
+        student_id = request.user.student.id
+        application = Application.objects.filter(student__id=student_id).first()
+
+        if not application:
+            return Response({"error": "Заявки не найдены для данного студента"}, status=status.HTTP_404_NOT_FOUND)
+
+        if not application.test_result:
+            return Response({
+                "status": "Пройдите тест!",
+                "test_url": "http://127.0.0.1:8000/api/v1/test/"
+            }, status=status.HTTP_200_OK)
+
+        if application.status == 'pending':
+            return Response({"status": "Заявка на рассмотрении"}, status=status.HTTP_200_OK)
+
+        if application.status == 'approved':
+            return Response({
+                "status": "Ваша заявка одобрена, внесите оплату и прикрепите сюда чек.",
+                "payment_url": "http://127.0.0.1:8000/api/v1/upload_payment_screenshot/"
+            }, status=status.HTTP_200_OK)
+
+        if application.status == 'rejected':
+            return Response({"status": "Ваша заявка была отклонена."}, status=status.HTTP_200_OK)
+
+        if application.status == 'awaiting_payment':
+            return Response({
+                "status": "Ваша заявка одобрена, внесите оплату и прикрепите сюда чек.",
+                "payment_url": "http://127.0.0.1:8000/api/v1/upload_payment_screenshot/"
+            }, status=status.HTTP_200_OK)
+
+        if application.status == 'awaiting_order':
+            return Response({"status": "Ваша заявка принята, ожидайте ордер на заселение."}, status=status.HTTP_200_OK)
+
+        if application.status == 'order':
+            student_in_dorm = StudentInDorm.objects.filter(application_id=application.id).first()
+            if student_in_dorm:
+                dormitory_name = student_in_dorm.room.dorm.name_ru
+                room = student_in_dorm.room.number
+                return Response({
+                    "status": f"Поздравляем! Вам выдан ордер в общежитие: {dormitory_name}, комната {room}"
+                }, status=status.HTTP_200_OK)
+
+        return Response({"error": "Неизвестный статус заявки"}, status=status.HTTP_400_BAD_REQUEST)
+
+
 
 class UploadPaymentScreenshotView(APIView):
     permission_classes = [IsStudent]
@@ -388,14 +426,12 @@ class AvatarUploadView(APIView):
             if default_storage.exists(student.avatar.name):
                 default_storage.delete(student.avatar.name)
 
-
             student.avatar = 'avatars/no-avatar.png'
             student.save()
 
             return Response({'message': 'Аватар удалён и восстановлен базовый.'}, status=status.HTTP_200_OK)
         else:
             return Response({'error': 'Аватар уже не установлен.'}, status=status.HTTP_400_BAD_REQUEST)
-
 
 
 class StudentApplicationUpdateView(APIView):
@@ -437,7 +473,6 @@ class StudentApplicationUpdateView(APIView):
                 deleted_ids.append(eid)
             except (ValueError, ApplicationEvidence.DoesNotExist):
                 pass
-
 
         added_evidences = []
         for key, uploaded_file in request.FILES.items():

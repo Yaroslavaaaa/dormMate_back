@@ -29,7 +29,6 @@ class RoomAdmin(admin.ModelAdmin):
 from django.core.files.storage import default_storage
 
 class AzureAdminFileWidget(AdminFileWidget):
-    """AdminFileWidget, но с принудительным default_storage=Azure."""
     def __init__(self, attrs=None):
         super().__init__(attrs)
         self.storage = default_storage

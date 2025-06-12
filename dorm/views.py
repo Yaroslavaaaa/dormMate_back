@@ -32,13 +32,10 @@ class RegionListView(generics.ListAPIView):
 
 
 class DormsReadOnlyOrAdmin(BasePermission):
-    """
-    Доступ на чтение всем, изменение — только если пользователь типа Admin.
-    """
+
     def has_permission(self, request, view):
         if request.method in SAFE_METHODS:
             return True
-        # Проверка на аутентификацию и принадлежность к Admin
         return (
             request.user
             and request.user.is_authenticated
@@ -64,7 +61,7 @@ class TestQuestionViewSet(generics.ListAPIView):
     serializer_class = TestQuestionSerializer
 
 class StudentPagination(PageNumberPagination):
-    page_size = 4
+    page_size = 10
     page_size_query_param = 'page_size'
     max_page_size = 100
 
@@ -147,21 +144,14 @@ class IsStudentOrAdmin(IsAuthenticated):
 
 
 class DormsReadOnlyOrAdmin(BasePermission):
-    """
-    Доступ на чтение всем, запись — только для пользователей типа Admin.
-    """
 
     def has_permission(self, request, view):
-        # Разрешаем GET, HEAD, OPTIONS всем
         if request.method in SAFE_METHODS:
             return True
 
-        # Для остальных запросов — только если это экземпляр Admin
         user = request.user
-        # Неавторизованным отказать
         if not user or not user.is_authenticated:
             return False
-        # Проверка: пользователь — это Admin
         return isinstance(user, Admin)
 
 
@@ -444,22 +434,6 @@ class SendMessageView(APIView):
 
             except Exception as e:
                 print("Ошибка запроса к ИИ:", e)
-
-            # admin = User.objects.filter(is_staff=True).first()
-            #
-            # if admin:
-            #     Notification.objects.create(
-            #         recipient=admin,
-            #         message_ru=f"Новый вопрос в чате #{chat.id}, требуется участие оператора."
-            #     )
-            #
-            #     Message.objects.create(
-            #         chat=chat,
-            #         sender=admin,
-            #         receiver=sender,
-            #         content="Здравствуйте! Я подключаюсь к вам как оператор. Чем могу помочь?",
-            #         is_from_bot=True
-            #     )
 
             return Response({"status": "Оператор уведомлён, бот не смог ответить"}, status=status.HTTP_200_OK)
 
@@ -762,16 +736,12 @@ class StudentsViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        s_value = serializer.validated_data.get('s')
-        if Student.objects.filter(s=s_value).exists():
-            raise ValidationError(f"Student with s = {s_value} already exists.")
         serializer.save()
 
     @action(detail=False, methods=['get'])
     def count(self, request):
         count = self.get_queryset().count()
         return Response({'count': count})
-
 
 
 
@@ -794,7 +764,6 @@ class AdminViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="me")
     def me(self, request):
         try:
-            # берём админа по тому же первичному ключу, что и user
             admin_obj = Admin.objects.get(pk=request.user.pk)
         except Admin.DoesNotExist:
             return Response(

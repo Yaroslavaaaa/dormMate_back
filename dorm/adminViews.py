@@ -107,7 +107,9 @@ class MyAdminRoleAPIView(APIView):
         role_label = dict(Admin.ROLE_CHOICES).get(role_code, 'Неизвестная роль')
         return Response({'role': role_code, 'label': role_label})
 
+from fuzzywuzzy import process
 
+from datetime import datetime
 class ExcelUploadView(APIView):
     permission_classes = [IsAdmin]
 
@@ -163,6 +165,13 @@ class ExcelUploadView(APIView):
                     )
 
                 password = birth_date.strftime('%d%m%Y')
+                print(f"Processing student: {row['student_s']} - Password generated: {password}")
+
+                gpa = row.get('gpa', None)
+                if gpa:
+                    gpa = float(gpa)
+                else:
+                    gpa = None
 
                 student, created = Student.objects.update_or_create(
                     s=row['student_s'],
@@ -178,17 +187,27 @@ class ExcelUploadView(APIView):
                         'gender': gender,
                         'iin': row['iin'],
                         'is_active': True,
+                        'gpa': gpa
                     }
                 )
 
-                if created:
+                print(f"Student created: {created}. Current student password: {student.password}")
+
+                if not student.password:
+                    print(f"Setting password for student {student.s}")
                     student.set_password(password)
-                    student.save()
+                else:
+                    print(f"Password already set for student {student.s}")
+
+                student.save()
+                print(f"Password for student {student.s} set successfully.")
 
             return Response({"status": "success", "data": "Данные успешно загружены и обновлены"},
                             status=status.HTTP_201_CREATED)
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 
 
 class GenerateSelectionAPIView(APIView):
@@ -749,43 +768,36 @@ from django.views import View
 
 class ExportStudentsToExcelView(View):
     def get(self, request, *args, **kwargs):
-        # Создаем рабочую книгу и активный лист
         wb = Workbook()
         sheet = wb.active
         sheet.title = "Students"
 
-        # Устанавливаем заголовки
         headers = ["S Студента", "Фамилия", "Имя", "Отчество", "Общежитие", "Комната", "ID Заявления", "Ордер", "ИИН"]
         sheet.append(headers)
 
-        # Получаем данные студентов с привязкой к общежитию и комнате
         students = StudentInDorm.objects.select_related('student', 'room', 'room__dorm').all()
 
-        # Заполняем данными
         for student_in_dorm in students:
             student = student_in_dorm.student
             dormitory = student_in_dorm.room.dorm if student_in_dorm.application else None
             room = student_in_dorm.room
 
-            # Данные для экспорта
             row = [
-                student.s,                           # S Студента
-                student.last_name,                   # Фамилия
-                student.first_name,                  # Имя
-                student.middle_name,                 # Отчество
-                dormitory.name_ru if dormitory else '', # Общежитие
-                room.number if room else '',         # Комната
-                student_in_dorm.application.id if student_in_dorm.application else '', # ID Заявления
-                student_in_dorm.order.name if student_in_dorm.order else '', # Ордер
-                student.iin if student.iin else ''   # ИИН
+                student.s,
+                student.last_name,
+                student.first_name,
+                student.middle_name,
+                dormitory.name_ru if dormitory else '',
+                room.number if room else '',
+                student_in_dorm.application.id if student_in_dorm.application else '',
+                student_in_dorm.order.name if student_in_dorm.order else '',
+                student.iin if student.iin else ''
             ]
             sheet.append(row)
 
-        # Настройка заголовков HTTP-ответа для скачивания файла
         response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         response['Content-Disposition'] = 'attachment; filename="students_export.xlsx"'
 
-        # Сохраняем файл в ответ
         wb.save(response)
         return response
 
@@ -801,7 +813,6 @@ class ExportStudentInDormExcelView(APIView):
         headers = ["S Студента", "Фамилия", "Имя", "Отчество", "Общежитие", "Комната", "ID Заявления", "Ордер", "ИИН"]
         sheet.append(headers)
 
-        # Получаем студентов из базы данных
         students_in_dorm = StudentInDorm.objects.select_related('student', 'application')
 
         for student_dorm in students_in_dorm:
@@ -819,12 +830,10 @@ class ExportStudentInDormExcelView(APIView):
             ]
             sheet.append(row)
 
-        # Сохраняем Excel файл в памяти (в BytesIO)
         output = BytesIO()
         workbook.save(output)
         output.seek(0)
 
-        # Отправляем правильный тип контента для файла Excel
         response = HttpResponse(
             output,
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
